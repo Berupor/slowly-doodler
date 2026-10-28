@@ -17,6 +17,8 @@ const CENTERLINE_MAX = 10;
 const CENTERLINE_PX = 2;
 const EPS_FINE = 0.15, EPS_COARSE = 1.4;
 const YIELD_EVERY_MS = 25;
+const COVER_PX = 2;
+const COVER_TOLERANCE = 1;
 const PATH_TOKEN = /([MmLlHhVvCcSsQqTtAaZz])|([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g;
 const PATH_ARGS = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
 const XLINK = 'http://www.w3.org/1999/xlink';
@@ -216,7 +218,8 @@ function flattenPath(d, tol) {
   return subpaths;
 }
 
-function hatch(polys, spacing, angle) {
+/** @param {number[][][]} polys closed, canvas units @param {number} spacing @param {number} angle @returns {number[][][]} hatch lines inside, even-odd */
+export function hatch(polys, spacing, angle) {
   const cos = Math.cos(angle), sin = Math.sin(angle);
   const rot = polys.map(pl => pl.map(([x, y]) => [x * cos + y * sin, -x * sin + y * cos]));
   let minY = Infinity, maxY = -Infinity;
@@ -235,6 +238,86 @@ function hatch(polys, spacing, angle) {
     rows.push({ y, segs });
   }
   return chainRows(rows, spacing, angle);
+}
+
+/** Sets the canvas pixels of mask whose centres lie inside the filled shape. @param {Uint8Array} mask @param {number[][][]} subpaths @param {string} rule */
+function fillShape(mask, subpaths, rule) {
+  const w = W * COVER_PX, h = H * COVER_PX;
+  let top = Infinity, bottom = -Infinity;
+  for (const sp of subpaths) for (const [, y] of sp) { top = Math.min(top, y * COVER_PX); bottom = Math.max(bottom, y * COVER_PX); }
+  const r0 = Math.max(0, Math.ceil(top - 0.5)), r1 = Math.min(h - 1, Math.floor(bottom - 0.5));
+  if (r1 < r0) return;
+  /** @type {number[][][]} */
+  const rows = Array.from({ length: r1 - r0 + 1 }, () => []);
+  for (const sp of subpaths)
+    for (let i = 0; i < sp.length; i++) {
+      const [ax, ay] = sp[i].map(v => v * COVER_PX), [bx, by] = sp[(i + 1) % sp.length].map(v => v * COVER_PX);
+      if (ay === by) continue;
+      const lo = Math.max(r0, Math.ceil(Math.min(ay, by) - 0.5)), hi = Math.min(r1, Math.ceil(Math.max(ay, by) - 0.5) - 1);
+      for (let r = lo; r <= hi; r++) rows[r - r0].push([ax + (r + 0.5 - ay) / (by - ay) * (bx - ax), by > ay ? 1 : -1]);
+    }
+  rows.forEach((xs, n) => {
+    xs.sort((p, q) => p[0] - q[0]);
+    const row = (r0 + n) * w;
+    let winding = 0;
+    for (let i = 0; i + 1 < xs.length; i++) {
+      winding += xs[i][1];
+      if (rule === 'evenodd' ? (i + 1) % 2 === 0 : winding === 0) continue;
+      const a = Math.max(0, Math.ceil(xs[i][0] - 0.5)), b = Math.min(w - 1, Math.ceil(xs[i + 1][0] - 0.5) - 1);
+      if (b >= a) mask.fill(1, row + a, row + b + 1);
+    }
+  });
+}
+
+/** @param {number[][]} pts @param {(p: number[]) => boolean} hidden @returns {number[][][]} the runs of the polyline that are not hidden */
+function visibleRuns(pts, hidden) {
+  const out = [];
+  /** @type {number[][]} */
+  let run = hidden(pts[0]) ? [] : [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) * COVER_PX));
+    let last = pts[i - 1];
+    for (let j = 1; j <= n; j++) {
+      const p = j === n ? pts[i] : [ax + (bx - ax) * j / n, ay + (by - ay) * j / n];
+      const shown = !hidden(p);
+      if (shown && (!run.length || j === n)) run.push(p);
+      else if (!shown && run.length) {
+        if (run[run.length - 1] !== last) run.push(last);
+        if (run.length > 1) out.push(run);
+        run = [];
+      }
+      last = p;
+    }
+  }
+  if (run.length > 1) out.push(run);
+  return out;
+}
+
+/**
+ * Hidden line removal in paint order, the line-art side of Illustrator's Pathfinder Trim: every layer keeps only the
+ * parts of its lines that are not under a fill painted after it. Coverage is a COVER_PX raster of the canvas; a line
+ * closer than COVER_TOLERANCE to the edge of a fill above it stays, so outlines shared by neighbouring shapes survive.
+ * @template {{ pts: number[][] }} L
+ * @param {{ subpaths: number[][][], rule: string, filled: boolean, lines: L[] }[]} layers canvas units, bottom first
+ * @returns {L[]} in paint order
+ */
+export function trimHidden(layers) {
+  const w = W * COVER_PX, h = H * COVER_PX, reach = Math.round(COVER_TOLERANCE * COVER_PX);
+  const covered = new Uint8Array(w * h);
+  const at = (/** @type {number} */ x, /** @type {number} */ y) => x >= 0 && y >= 0 && x < w && y < h && covered[y * w + x] === 1;
+  const hidden = (/** @type {number[]} */ [x, y]) => {
+    const px = Math.floor(x * COVER_PX), py = Math.floor(y * COVER_PX);
+    return at(px, py) && at(px - reach, py) && at(px + reach, py) && at(px, py - reach) && at(px, py + reach);
+  };
+  /** @type {L[][]} */
+  const kept = [];
+  for (let i = layers.length - 1; i >= 0; i--) {
+    const { subpaths, rule, filled, lines } = layers[i];
+    kept[i] = lines.flatMap(l => visibleRuns(l.pts, hidden).map(pts => ({ ...l, pts })));
+    if (filled && subpaths.length) fillShape(covered, subpaths, rule);
+  }
+  return kept.flat();
 }
 
 function pathLength(pts) {
@@ -386,26 +469,30 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
     const weightOf = w => remix ? Math.round(Math.min(LIMITS.maxWeight, Math.max(LIMITS.minWeight, w)) * 2) / 2 : weight;
     const spacing = Math.max(HATCH_SPACING, HATCH_GAP * STROKE_SCALE * weight);
 
-    const polylines = [];
+    const layers = [];
     for (let n = 0; n < shapes.length; n++) {
       const s = shapes[n];
       const subpaths = s.subpaths.map(map);
       const strokeToken = s.stroke && token(s.stroke);
       const fillToken = s.fill && token(s.fill);
+      const lines = [];
+      layers.push({ subpaths, rule: s.rule, filled: !!s.fill, lines });
       if (remix && !s.stroke && fillToken === CANVAS_TOKEN) continue;
       if (s.stroke) {
         const w = weightOf(s.sw * k / STROKE_SCALE);
-        for (const pts of subpaths) polylines.push({ color: strokeToken, weight: w, pts: simplify(pts) });
+        for (const pts of subpaths) lines.push({ color: strokeToken, weight: w, pts });
       }
       const centre = s.fill && !s.stroke && !remix ? centreOf(subpaths, s.rule, placeScale) : null;
-      if (centre?.length) for (const pts of centre) polylines.push({ color: fillToken, weight, pts: simplify(pts) });
+      if (centre?.length) for (const pts of centre) lines.push({ color: fillToken, weight, pts });
       else if (s.fill && fills !== 'none') {
-        if (!s.stroke) for (const pts of subpaths) polylines.push({ color: fillToken, weight: weightOf(1), pts: simplify(pts) });
+        if (!s.stroke) for (const pts of subpaths) lines.push({ color: fillToken, weight: weightOf(1), pts });
         if (fills === 'hatch')
-          for (const pts of hatch(subpaths, spacing, HATCH_ANGLE)) polylines.push({ color: fillToken, weight: weightOf(1), pts });
+          for (const pts of hatch(subpaths, spacing, HATCH_ANGLE)) lines.push({ color: fillToken, weight: weightOf(1), pts });
       }
       await tick(0.8 + 0.2 * (n + 1) / shapes.length);
     }
+    const visible = remix || fills === 'none' ? layers.flatMap(l => l.lines) : trimHidden(layers);
+    const polylines = visible.map(p => ({ ...p, pts: simplify(p.pts) }));
     const onCanvas = remix ? polylines : polylines.flatMap(p => clipToCanvas(p.pts).map(pts => ({ ...p, pts })));
     const kept = fitBudget(onCanvas);
     return { polylines: kept, palette, dropped: onCanvas.length - kept.length };
