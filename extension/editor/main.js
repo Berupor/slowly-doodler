@@ -123,6 +123,7 @@ const TOOLS = {
 };
 /** @type {Record<string, string>} */
 const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser' };
+const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file])';
 
 /** @param {string} text */
 function say(text, error = false) {
@@ -939,7 +940,7 @@ $('tabs').onclick = e => {
 };
 
 document.addEventListener('keydown', e => {
-  if (e.target instanceof Element && e.target.closest('input,textarea,select')) return;
+  if (e.target instanceof Element && e.target.closest(TYPING_TARGET)) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
     e.preventDefault();
@@ -954,8 +955,9 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => {
   if (e.key !== ' ') return;
   setSpace(false);
-  if (!(e.target instanceof Element && e.target.closest('input,textarea,select'))) e.preventDefault();
+  if (!(e.target instanceof Element && e.target.closest(TYPING_TARGET))) e.preventDefault();
 });
+document.addEventListener('change', e => { if (e.target instanceof HTMLSelectElement) e.target.blur(); });
 window.addEventListener('blur', () => setSpace(false));
 $('zoom').onclick = () => setView(0, 0, W);
 
