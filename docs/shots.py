@@ -14,8 +14,8 @@ STEPS = 14
 GIF_HEIGHT = 640
 FLOW_WIDTH = 900
 REPLAY_FRAMES = 70
-PHOTO_SLIDERS = {'photoDetail': '90', 'photoMin': '4'}
-POP_BUTTONS = {'popGallery': '#galleryBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
+PHOTO_SLIDERS = {'importDetail': '60', 'importWeight': '1'}
+POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]'}
 BUILDING_STROKES = ['#8e24aa', '#1e88e5', '#0abab5', '#f06292', '#e53935']
 BASELINE = 720
@@ -219,11 +219,14 @@ def run():
         source = work / 'city.png'
         source.write_bytes(base64.b64decode(page.evaluate(RASTERIZE_JS, city(True))))
         ui('#photoFile').set_input_files(str(source))
-        ed.locator('#photoColors').check(force=True)
+        page.wait_for_timeout(1500)
+        ed.locator('#importPreset').select_option('detailed')
+        ed.locator('#importColors').select_option('snap')
         for id, value in PHOTO_SLIDERS.items():
             ed.locator(f'#{id}').evaluate('(e, v) => { e.value = v; e.dispatchEvent(new Event("input")); }', value)
         page.wait_for_timeout(2500)
-        close_pops()
+        ed.locator('#importDone').click()
+        ed.locator('[data-tool=pen]').click()
         before_after(source, ed.locator('#board').screenshot(), DOCS / 'photo.png')
         save('City image')
 
@@ -231,6 +234,7 @@ def run():
         ui('#text').fill('Hello from far away, dear friend!')
         act('#writeText')
         page.wait_for_timeout(800)
+        ed.locator('#importDone').click()
         save('Letter')
 
         act('#clear')

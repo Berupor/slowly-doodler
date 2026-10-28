@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LIMITS, W, H, validate, buildSdj } from '../extension/editor/sdj.js';
 import {
-  pointInPolygon, insideShare, lassoPick, hitStroke, bounds, translate, scaleAbout, rotateAbout, applyMatrix, transformStroke,
+  pointInPolygon, insideShare, lassoPick, hitStroke, bounds, translate, scaleAbout, rotateAbout, applyMatrix, compose, transformStroke,
   fitShift, duplicateShift, scaleFactors, snapAngle, appendTimeline, pasteError, parseClip,
 } from '../extension/editor/select.js';
 
@@ -10,6 +10,17 @@ const stroke = (points, overrides = {}) => ({ color: 'black', weight: 3, startOf
 const line = (x0, y0, x1, y1, overrides = {}) => stroke([[x0, y0, 0], [x1, y1, 100]], overrides);
 const SQUARE = [[100, 100], [200, 100], [200, 200], [100, 200]];
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} is not ${b}`);
+
+describe('compose', () => {
+  it('applies the right matrix first, so a placement can be replayed on a fresh trace', () => {
+    const moves = [scaleAbout(2, 2, 100, 100), translate(30, -10), rotateAbout(0.3, 50, 60)];
+    const total = moves.reduce((m, step) => compose(step, m), translate(0, 0));
+    const stepwise = moves.reduce((p, m) => applyMatrix(m, p[0], p[1]), [7, 11]);
+    const [x, y] = applyMatrix(total, 7, 11);
+    near(x, stepwise[0], 1e-9);
+    near(y, stepwise[1], 1e-9);
+  });
+});
 
 describe('pointInPolygon', () => {
   it('tells inside from outside of a square', () => {

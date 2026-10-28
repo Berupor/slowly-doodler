@@ -10,7 +10,8 @@
 <header class="topbar">
   <div class="bar-group">
     <button class="bar-text" id="galleryBtn" popovertarget="popGallery" title="Gallery: saved drawings">Gallery</button>
-    <button class="drawing-icon-button bar-button" id="actionsBtn" popovertarget="popActions" title="Actions: import, reference, share, replay, help"><i class="icon-settings drawing-font-icon" data-glyph="⚙"></i></button>
+    <button class="drawing-icon-button bar-button" id="insertBtn" popovertarget="popInsert" title="Insert a photo, SVG, text or reference image; or drop or paste a file on the canvas"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button class="drawing-icon-button bar-button" id="actionsBtn" popovertarget="popActions" title="Actions: canvas, share, replay, help"><i class="icon-settings drawing-font-icon" data-glyph="⚙"></i></button>
     <button class="drawing-icon-button bar-button" id="guidesBtn" popovertarget="popGuides" title="Canvas guides: symmetry and grid"><i class="icon-grid drawing-font-icon" data-glyph="#"></i></button>
     <button class="drawing-tool-circle" id="selectTool" title="Select (S)" aria-pressed="false"><span class="tool-select"></span></button>
   </div>
@@ -21,6 +22,7 @@
     </button>
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
+    <button class="drawing-icon-button bar-button" id="fullscreen" title="Full screen (Shift+F)" aria-pressed="false"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
     <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
     <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
     <button class="drawing-icon-button bar-button" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
@@ -51,7 +53,23 @@
     <button class="drawing-icon-button side-button" id="redo" title="Redo (Ctrl+Shift+Z)"><i class="icon-undo drawing-font-icon flip" data-glyph="↶"></i></button>
   </div>
 
-  <div class="dock"></div>
+  <div class="dock">
+    <div class="import-bar" id="importBar" role="group" aria-label="Placing the import" hidden>
+      <div class="import-controls">
+        <select class="custom-select custom-select-sm" id="importPreset" aria-label="Style">
+          <option value="outline">Outline</option><option value="sketch">Sketch</option><option value="detailed">Detailed</option><option value="scan">Ink scan</option>
+        </select>
+        <label class="import-field" id="importDetailField">Detail <input type="range" class="custom-range" id="importDetail" min="0" max="100" value="15"><output id="importDetailOut">15</output></label>
+        <label class="import-field">Weight <input type="range" class="custom-range" id="importWeight" min="0.5" max="8" step="0.5" value="3"><output id="importWeightOut">3</output></label>
+        <select class="custom-select custom-select-sm" id="importColors" aria-label="Colours">
+          <option value="one">Pen colour</option><option value="snap">Original colours</option><option value="exact">Exact colours</option>
+        </select>
+        <button class="btn btn-outline-light btn-sm" id="importCancel" title="Drop the import (Esc)">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="importDone" title="Add to the drawing (Enter)">Done</button>
+      </div>
+      <div class="hint">Drag to move, corners to resize. After Done the strokes stay selected: the size slider and [ ] still change their weight.</div>
+    </div>
+  </div>
 
   <div class="hud">
     <span class="drawing-count drawing-pill" id="badge" title="Uses weights or colours outside the standard set, not verified with the Slowly apps" hidden>experimental</span>
@@ -81,124 +99,14 @@
 
 <div class="pop" id="popActions" popover aria-label="Actions">
   <div class="tabs" id="tabs" role="tablist">
-    <button class="tab active" data-tab="add" role="tab" aria-selected="true">Add</button>
-    <button class="tab" data-tab="canvas" role="tab" aria-selected="false">Canvas</button>
+    <button class="tab active" data-tab="canvas" role="tab" aria-selected="true">Canvas</button>
     <button class="tab" data-tab="share" role="tab" aria-selected="false">Share</button>
     <button class="tab" data-tab="video" role="tab" aria-selected="false">Replay</button>
     <button class="tab" data-tab="prefs" id="prefsTab" role="tab" aria-selected="false">Prefs</button>
     <button class="tab" data-tab="help" role="tab" aria-selected="false">Help</button>
   </div>
 
-  <div class="panel" data-panel="add" role="tabpanel">
-    <section>
-      <div class="field"><h3>SVG</h3><label class="btn btn-outline-light btn-sm" tabindex="0">Choose SVG<input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden></label></div>
-      <div class="field">
-        <label for="svgFills">Fills</label>
-        <select class="custom-select custom-select-sm" id="svgFills">
-          <option value="hatch">hatch</option><option value="outline">outline</option><option value="none">skip</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="svgColors">Colours</label>
-        <select class="custom-select custom-select-sm" id="svgColors">
-          <option value="snap">snap to palette</option><option value="exact">exact colours</option>
-        </select>
-      </div>
-    </section>
-    <section>
-      <div class="field"><h3>Photo to line art</h3><label class="btn btn-outline-light btn-sm" tabindex="0">Choose photo<input type="file" id="photoFile" accept="image/*" hidden></label></div>
-      <div class="field">
-        <label for="photoMode">Mode</label>
-        <select class="custom-select custom-select-sm" id="photoMode">
-          <option value="edges">edges (photos)</option><option value="sketch">sketch (clean lines)</option><option value="dark">dark lines (scans, pencil)</option>
-        </select>
-      </div>
-      <details>
-        <summary>Adjust</summary>
-        <div class="field">
-          <label for="photoDetail">Detail</label>
-          <input type="range" class="custom-range" id="photoDetail" min="0" max="200" value="50">
-          <output id="photoDetailOut">50</output>
-        </div>
-        <div class="field">
-          <label for="photoMin">Min length</label>
-          <input type="range" class="custom-range" id="photoMin" min="2" max="40" value="8">
-          <output id="photoMinOut">8</output>
-        </div>
-        <div class="field">
-          <label for="photoZoom">Zoom</label>
-          <input type="range" class="custom-range" id="photoZoom" min="1" max="4" step="0.05" value="1">
-          <output id="photoZoomOut">1×</output>
-        </div>
-        <div class="field">
-          <label for="photoPanX">Move X</label>
-          <input type="range" class="custom-range" id="photoPanX" min="-1" max="1" step="0.05" value="0">
-          <output id="photoPanXOut">0</output>
-        </div>
-        <div class="field">
-          <label for="photoPanY">Move Y</label>
-          <input type="range" class="custom-range" id="photoPanY" min="-1" max="1" step="0.05" value="0">
-          <output id="photoPanYOut">0</output>
-        </div>
-      </details>
-      <div class="custom-control custom-switch">
-        <input type="checkbox" class="custom-control-input" id="photoColors">
-        <label class="custom-control-label" for="photoColors">Photo colours</label>
-      </div>
-    </section>
-    <section>
-      <div class="field"><h3>Handwritten text</h3><button class="btn btn-primary btn-sm" id="writeText">Write</button></div>
-      <textarea class="form-control" id="text" rows="2" placeholder="Hello from far away"></textarea>
-      <div class="field">
-        <label for="font">Font</label>
-        <select class="custom-select custom-select-sm" id="font">
-          <option value="cursive">cursive</option>
-          <option value="'Comic Sans MS', 'Comic Neue', cursive">Comic</option>
-          <option value="'Segoe Print', 'Bradley Hand', cursive">Print</option>
-          <option value="'Brush Script MT', 'Brush Script', cursive">Brush</option>
-          <option value="serif">serif</option>
-          <option value="sans-serif">sans</option>
-          <option value="monospace">mono</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="textAlign">Position</label>
-        <select class="custom-select custom-select-sm" id="textAlign"><option value="top">top</option><option value="middle">middle</option><option value="bottom">bottom</option></select>
-      </div>
-      <div class="field">
-        <label for="textSize">Size</label>
-        <input type="range" class="custom-range" id="textSize" min="24" max="140" value="56">
-        <output id="textSizeOut">56</output>
-      </div>
-    </section>
-    <div class="hint">Imports use the current colour and weight; moving a slider redoes the last one.</div>
-  </div>
-
-  <div class="panel" data-panel="canvas" role="tabpanel" hidden>
-    <section>
-      <div class="field">
-        <h3>Reference image</h3>
-        <label class="btn btn-outline-light btn-sm" tabindex="0">Choose image<input type="file" id="refFile" accept="image/*" hidden></label>
-        <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
-      </div>
-      <div class="field">
-        <label for="refOpacity">Opacity</label>
-        <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
-        <output id="refOpacityOut">35%</output>
-      </div>
-      <div class="field">
-        <label for="refScale">Scale</label>
-        <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
-        <output id="refScaleOut">1×</output>
-      </div>
-      <div class="field">
-        <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
-        <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
-        <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
-        <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
-      </div>
-      <div class="hint">Shown under the canvas for tracing and never exported; with Move on, dragging moves the image.</div>
-    </section>
+  <div class="panel" data-panel="canvas" role="tabpanel">
     <section>
       <div class="field"><h3>Clear canvas</h3><button class="btn btn-outline-light btn-sm" id="clear">Clear</button></div>
       <div class="hint">Removes every stroke; one undo step brings them back.</div>
@@ -268,7 +176,9 @@
         <dt><kbd>S</kbd></dt><dd>select: drag a lasso or click a stroke</dd>
         <dt><kbd>Shift</kbd> + select</dt><dd>add to or remove from the selection; while resizing, free proportions; while rotating, 15° steps; while moving, one axis</dd>
         <dt><kbd>Ctrl+A</kbd></dt><dd>select all</dd>
-        <dt><kbd>Esc</kbd></dt><dd>deselect, or close a menu</dd>
+        <dt><kbd>Esc</kbd></dt><dd>cancel an import, deselect, close a menu or leave full screen; in Slowly, with nothing left to close, close the editor</dd>
+        <dt><kbd>Enter</kbd></dt><dd>finish placing an import</dd>
+        <dt><kbd>Shift+F</kbd></dt><dd>full screen</dd>
         <dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>nudge the selection by 1 (Shift: 10)</dd>
         <dt><kbd>Del</kbd></dt><dd>delete the selection</dd>
         <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd></dt><dd>copy, cut, paste; pasted strokes replay last</dd>
@@ -289,6 +199,63 @@
       <div class="hint">Tap the active tool again for its options.</div>
     </section>
   </div>
+</div>
+
+<div class="pop" id="popInsert" popover aria-label="Insert">
+  <section class="insert-files">
+    <label class="btn btn-outline-light btn-sm" tabindex="0">Photo<input type="file" id="photoFile" accept="image/*" hidden></label>
+    <label class="btn btn-outline-light btn-sm" tabindex="0">SVG<input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden></label>
+  </section>
+  <div class="hint">Or drop or paste an image or SVG on the canvas. It lands as a preview to place and tune, then Done.</div>
+  <section>
+    <div class="field"><h3>Text</h3><button class="btn btn-primary btn-sm" id="writeText">Write</button></div>
+    <textarea class="form-control" id="text" rows="2" placeholder="Hello from far away"></textarea>
+    <div class="field">
+      <label for="font">Font</label>
+      <select class="custom-select custom-select-sm" id="font">
+        <option value="cursive">cursive</option>
+        <option value="'Comic Sans MS', 'Comic Neue', cursive">Comic</option>
+        <option value="'Segoe Print', 'Bradley Hand', cursive">Print</option>
+        <option value="'Brush Script MT', 'Brush Script', cursive">Brush</option>
+        <option value="serif">serif</option>
+        <option value="sans-serif">sans</option>
+        <option value="monospace">mono</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="textAlign">Position</label>
+      <select class="custom-select custom-select-sm" id="textAlign"><option value="top">top</option><option value="middle">middle</option><option value="bottom">bottom</option></select>
+    </div>
+    <div class="field">
+      <label for="textSize">Size</label>
+      <input type="range" class="custom-range" id="textSize" min="24" max="140" value="56">
+      <output id="textSizeOut">56</output>
+    </div>
+  </section>
+  <section>
+    <div class="field">
+      <h3>Reference</h3>
+      <label class="btn btn-outline-light btn-sm" tabindex="0">Choose image<input type="file" id="refFile" accept="image/*" hidden></label>
+      <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
+    </div>
+    <div class="field">
+      <label for="refOpacity">Opacity</label>
+      <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
+      <output id="refOpacityOut">35%</output>
+    </div>
+    <div class="field">
+      <label for="refScale">Scale</label>
+      <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
+      <output id="refScaleOut">1×</output>
+    </div>
+    <div class="field">
+      <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
+      <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
+      <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
+      <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
+    </div>
+    <div class="hint">Shown under the canvas for tracing and never exported; with Move on, dragging moves the image.</div>
+  </section>
 </div>
 
 <div class="pop" id="popGuides" popover aria-label="Canvas guides">

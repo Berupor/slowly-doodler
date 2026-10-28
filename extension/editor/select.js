@@ -93,6 +93,12 @@ export function rotateAbout(angle, cx, cy) {
 }
 /** @param {Matrix} m @param {number} x @param {number} y @returns {[number, number]} */
 export const applyMatrix = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+/** @param {Matrix} a @param {Matrix} b @returns {Matrix} a after b */
+export const compose = (a, b) => [
+  a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+  a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+  a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5],
+];
 
 /** @param {S.Stroke} stroke @param {Matrix} m keeps weight, color and timing; points are clamped to the canvas */
 export function transformStroke(stroke, m) {
@@ -218,11 +224,12 @@ function svg(tag, attrs = {}) {
  * @property {() => number} pxPerUnit
  * @property {string} typing selector of elements where keys belong to the text field
  * @property {number} gapMs
+ * @property {(stroke: S.Stroke) => Element | undefined} elementOf the ink path drawn for a stroke
+ * @property {(m: Matrix) => void} transformed called with every move, scale, rotate or flip applied to the selection
  */
 
 /** @param {Env} env */
 export function createSelector(env) {
-  const ink = /** @type {Element} */ (document.getElementById('ink'));
   const layer = svg('g', { id: 'sel' });
   const ghosts = svg('g'), haloLayer = svg('g'), chrome = svg('g'), lassoEl = svg('path', { class: 'lasso' });
   layer.append(ghosts, haloLayer, chrome, lassoEl);
@@ -259,6 +266,7 @@ export function createSelector(env) {
   let halos = [];
   /** @type {Box | null} */
   let box = null;
+  let held = false;
 
   /** @param {Event} e */
   const typing = e => e.target instanceof Element && !!e.target.closest(env.typing);
@@ -290,8 +298,8 @@ export function createSelector(env) {
 
   function render() {
     const present = new Set(env.strokes());
-    for (const s of sel) if (!present.has(s) || !env.pickable(s)) sel.delete(s);
-    bar.hidden = !sel.size;
+    for (const s of sel) if (!present.has(s) || (!held && !env.pickable(s))) sel.delete(s);
+    bar.hidden = !sel.size || held;
     ghosts.replaceChildren();
     lassoEl.removeAttribute('d');
     halos = items().map(s => ({ el: svg('path', { class: 'halo', d: S.pathD(s.points) }), weight: s.weight }));
@@ -320,6 +328,7 @@ export function createSelector(env) {
   /** @param {Matrix} m @param {string} [tag] */
   function applyMatrixToSelection(m, tag) {
     edit(s => transformStroke(s, m), tag);
+    env.transformed(m);
   }
 
   /** @param {string} axis */
@@ -344,6 +353,7 @@ export function createSelector(env) {
 
   /** @param {S.Stroke[]} source @param {S.Palette} extra @param {number} steps @param {boolean} [inPlace] copies stay on the layers of the source, otherwise all go to the active layer */
   function place(source, extra, steps, inPlace = false) {
+    if (held) return;
     const why = !inPlace && env.addBlocked();
     if (why) return env.say(why, true);
     const strokes = env.strokes();
@@ -383,8 +393,7 @@ export function createSelector(env) {
   function begin(kind, handle) {
     const d = /** @type {Drag} */ (drag);
     const picked = items();
-    const index = new Map(env.strokes().map((s, i) => [s, i]));
-    const hidden = /** @type {SVGElement[]} */ (picked.map(s => ink.children[/** @type {number} */ (index.get(s))]).filter(Boolean));
+    const hidden = /** @type {SVGElement[]} */ (picked.map(env.elementOf).filter(Boolean));
     for (const el of hidden) el.style.display = 'none';
     ghosts.replaceChildren(...picked.map(s => env.pathEl(s.points, s.color, s.weight)));
     Object.assign(d, { kind, handle, items: picked, box: bounds(picked), hidden, m: IDENTITY });
@@ -428,6 +437,7 @@ export function createSelector(env) {
 
   /** @param {Drag} d */
   function click(d) {
+    if (held) return render();
     const hit = hitStroke(pickable(), [d.p.x, d.p.y], CLICK_PX / env.pxPerUnit());
     if (!d.add) sel = new Set(hit ? [hit] : []);
     else if (hit) { if (sel.has(hit)) sel.delete(hit); else sel.add(hit); }
@@ -436,6 +446,7 @@ export function createSelector(env) {
 
   /** @param {Drag} d */
   function finishLasso(d) {
+    if (held) return render();
     const picked = lassoPick(pickable(), /** @type {number[][]} */ (d.poly));
     sel = new Set(d.add ? [...sel, ...picked] : picked);
     render();
@@ -443,6 +454,7 @@ export function createSelector(env) {
 
   document.addEventListener('keydown', e => {
     if (typing(e) || drag) return;
+    if (held && !ARROWS[e.key.toLowerCase()]) return;
     const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
     if (mod && !e.altKey && k === 'a') {
       e.preventDefault();
@@ -470,7 +482,7 @@ export function createSelector(env) {
     env.say(`copied ${sel.size} strokes`);
   });
   document.addEventListener('cut', e => {
-    if (typing(e) || !sel.size || !e.clipboardData) return;
+    if (typing(e) || !sel.size || !e.clipboardData || held) return;
     e.preventDefault();
     e.clipboardData.setData('text/plain', copyJson());
     pastes = 0;
@@ -478,7 +490,7 @@ export function createSelector(env) {
     remove();
   });
   document.addEventListener('paste', e => {
-    if (typing(e)) return;
+    if (typing(e) || e.defaultPrevented) return;
     const source = parseClip(e.clipboardData?.getData('text/plain') ?? '') ?? clip;
     if (!source) return;
     e.preventDefault();
@@ -486,6 +498,7 @@ export function createSelector(env) {
   });
 
   function clear() {
+    if (held) return;
     if (drag) { for (const el of drag.hidden ?? []) el.style.display = ''; drag = null; }
     sel = new Set();
     render();
@@ -494,11 +507,27 @@ export function createSelector(env) {
   return {
     get busy() { return !!drag; },
     get size() { return sel.size; },
+    /** @returns {number | null} the weight shared by every selected stroke */
+    get weight() {
+      const ws = new Set(items().map(s => s.weight));
+      return ws.size === 1 ? /** @type {number} */ ([...ws][0]) : null;
+    },
     refresh() {
       if (drag) endDrag();
       render();
     },
     zoomed,
+    /** @param {S.Stroke[]} list replaces the selection */
+    select(list) {
+      sel = new Set(list);
+      render();
+    },
+    /** @param {S.Stroke[] | null} list keeps exactly these strokes selected until released with null; clicks and lassos cannot change it */
+    hold(list) {
+      held = !!list;
+      sel = new Set(list ?? []);
+      render();
+    },
     clear,
     cancel() {
       if (!drag) return;

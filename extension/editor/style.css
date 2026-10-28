@@ -250,7 +250,23 @@ button:focus:not(:focus-visible) { outline: 0; }
 #status.error { color: var(--over); }
 :root.theme-dark #status.error { color: #ff8a80; }
 #progress { width: 120px; height: 6px; accent-color: var(--drawing-accent); }
-body.busy [data-panel=add] :is(button, select, input, label.btn) { pointer-events: none; opacity: .5; }
+body.busy #popInsert :is(button, select, input, label.btn) { pointer-events: none; opacity: .5; }
+.dock { flex-direction: column; align-items: center; }
+.import-bar {
+  display: flex; flex-direction: column; gap: 6px; max-width: calc(100vw - 24px); margin: 4px; padding: 8px 12px;
+  border: 1px solid var(--drawing-border); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: var(--pop-shadow);
+}
+.import-bar[hidden] { display: none; }
+.import-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.import-controls .custom-select { width: auto; }
+.import-field { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 13px; }
+.import-field input { width: 110px; }
+.import-field output { width: 24px; font-variant-numeric: tabular-nums; color: var(--text); }
+.import-bar .btn-sm { margin: 0; }
+#popInsert > section { display: flex; flex-direction: column; gap: 10px; }
+#popInsert > section + section { padding-top: 12px; border-top: 1px solid var(--line); }
+#popInsert > .insert-files { flex-direction: row; gap: 8px; }
+.insert-files .btn { flex: 1; justify-content: center; }
 
 .pop {
   position-area: bottom span-right; position-try-fallbacks: flip-inline;

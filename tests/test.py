@@ -37,7 +37,7 @@ with sync_playwright() as p:
             page.mouse.move(box['x'] + x, box['y'] + y, steps=4)
         page.mouse.up()
 
-    POP_BUTTONS = {'popGallery': '#galleryBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
+    POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                    'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]', 'popLayers': '#layersBtn'}
     def open_pop():
         return page.evaluate('document.querySelector(".pop:popover-open")?.id ?? null')
@@ -76,10 +76,13 @@ with sync_playwright() as p:
     act('#clear', 'click')
     page.locator('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
     page.wait_for_timeout(300)
-    print('svg hatch', validate(), page.locator('#status').inner_text())
-    act('#svgColors', 'select_option', 'exact')
+    page.locator('#importPreset').select_option('detailed')
+    page.wait_for_timeout(300)
+    page.locator('#importColors').select_option('exact')
     page.wait_for_timeout(400)
-    print('svg exact', validate(), page.locator('#status').inner_text())
+    page.screenshot(path=str(OUT / f'2-svg-pending{SUFFIX}.png'))
+    page.locator('#importDone').click()
+    print('svg detailed exact', validate(), page.locator('#status').inner_text())
     page.screenshot(path=str(OUT / f'2-svg{SUFFIX}.png'))
 
     png = page.evaluate('''() => { const c = document.createElement('canvas'); c.width = 400; c.height = 300;
@@ -90,35 +93,18 @@ with sync_playwright() as p:
     (OUT / 'photo.png').write_bytes(base64.b64decode(png))
     act('#clear', 'click')
     page.locator('#photoFile').set_input_files(str(OUT / 'photo.png'))
-    page.wait_for_timeout(1500)
-    print('photo', validate(), page.locator('#status').inner_text())
-    act('#photoColors', 'check', force=True)
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(1000)
+    page.locator('#importColors').select_option('snap')
+    page.wait_for_timeout(1000)
+    page.locator('#importDone').click()
     print('photo colours', validate(), page.locator('#status').inner_text())
     page.screenshot(path=str(OUT / f'3-photo{SUFFIX}.png'))
-
-    def photo_extent():
-        pts = [p for s in json.loads(page.locator('#out').input_value())['sdj']['strokes'] for p in s['points']]
-        return [min(p[0] for p in pts), max(p[0] for p in pts), min(p[1] for p in pts), max(p[1] for p in pts)]
-    def set_range(id, value):
-        page.evaluate('([id, v]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event("input")); }', [id, value])
-    fit = photo_extent()
-    set_range('photoZoom', '3')
-    page.wait_for_timeout(1500)
-    print('photo zoom', validate(), photo_extent())
-    set_range('photoPanX', '1')
-    page.wait_for_timeout(1500)
-    print('photo zoom pan', validate(), photo_extent())
-    assert fit[3] - fit[2] < photo_extent()[3] - photo_extent()[2], 'zoom should enlarge the drawing'
-    page.screenshot(path=str(OUT / f'3-photo-zoom{SUFFIX}.png'))
-    set_range('photoZoom', '1')
-    set_range('photoPanX', '0')
-    page.wait_for_timeout(1500)
 
     act('#clear', 'click')
     act('#text', 'fill', 'Hello from far away, dear friend!')
     act('#writeText', 'click')
     page.wait_for_timeout(800)
+    page.locator('#importDone').click()
     print('text', validate(), page.locator('#status').inner_text())
     page.screenshot(path=str(OUT / f'4-text{SUFFIX}.png'))
 
@@ -355,6 +341,8 @@ with sync_playwright() as p:
     def pen(pts):
         page.keyboard.press('b'); mouse_path(pts)
     def S(): return page.evaluate('__doodler.strokes')
+    def layers(): return page.evaluate('__doodler.layers')
+    def active(): return page.evaluate('__doodler.active')
     def halos(): return page.locator('#sel .halo').count()
     def bbox(strokes):
         ps = [p for s in strokes for p in s['points']]
@@ -476,11 +464,11 @@ with sync_playwright() as p:
     check('a run of nudges is one undo step', S() == base)
     mouse_path([(60, 60), (620, 60), (620, 330), (60, 330)])
 
-    page.locator('.dock button').first.click()
+    page.locator('.dock .drawing-tool-group button').first.click()
     fb = bbox(S()[:2])
     check('flip horizontal mirrors around the selection centre', close((fb[0], fb[2]), (b0[0], b0[2]), 0.1) and S()[0]['points'][0][0] != base[0]['points'][0][0]
           and close(((S()[0]['points'][0][0] + base[0]['points'][0][0]) / 2,), ((b0[0] + b0[2]) / 2,), 0.1))
-    page.locator('.dock button').nth(1).click()
+    page.locator('.dock .drawing-tool-group button').nth(1).click()
     check('flip vertical keeps the bounding box', close(bbox(S()[:2]), b0, 0.1) and S()[0]['points'][0][1] != base[0]['points'][0][1])
     page.keyboard.press('Control+z'); page.keyboard.press('Control+z')
     check('flips undo one by one', S() == base)
@@ -687,11 +675,108 @@ with sync_playwright() as p:
     check('both symmetry controls drive the same drawing mode', len(S()) == 2, len(S()))
     act('#symmetryBrush', 'select_option', 'off')
     act('#clear')
-    ui('#photoFile')
-    check('photo sliders sit behind the Adjust disclosure', not page.locator('#photoZoom').is_visible())
-    page.locator('summary', has_text='Adjust').click()
-    check('Adjust reveals the photo sliders', page.locator('#photoZoom').is_visible())
-    close_pops()
+    def preview(): return page.evaluate('[...document.querySelectorAll("#ink path")].map(p => p.getAttribute("stroke-width"))')
+    def preview_box(): return page.evaluate('(() => { const b = document.getElementById("ink").getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; })()')
+    def import_bar(): return page.locator('#importBar').is_visible()
+    def set_input(id, value):
+        page.evaluate('([id, v]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event("input", {bubbles: true})); }', [id, str(value)])
+    svg_cases = page.evaluate('''async () => {
+      const run = async (body, opts = {}) => (await __doodler.importSvg(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">${body}</svg>`, { weight: 2, ...opts })).polylines;
+      const many = Array.from({ length: 3000 }, (_, i) => `<circle cx="${i % 60 * 1.6 + 2}" cy="${Math.floor(i / 60) * 1.9 + 2}" r="0.6" fill="red"/>`).join('');
+      return {
+        thin: await run('<path d="M10 50 C 30 20, 70 80, 90 50" stroke="#000" stroke-width="1" fill="none"/>'),
+        square: await run('<rect x="20" y="20" width="60" height="60" fill="#1e88e5"/>'),
+        bar: await run('<rect x="10" y="49.5" width="80" height="1" fill="#000"/>'),
+        use: await run('<defs><path id="p" d="M0 0 L10 0" stroke="#000"/></defs><use href="#p" x="10" y="10"/><use href="#p" x="10" y="90"/>'),
+        gradient: await run('<defs><linearGradient id="g"><stop offset="0" stop-color="#e53935"/><stop offset="1" stop-color="#e53935"/></linearGradient></defs><rect x="10" y="10" width="80" height="80" fill="url(#g)"/>'),
+        many: await run(many, { fills: 'hatch' }),
+      };
+    }''')
+    thin = svg_cases['thin']
+    check('a thin stroked SVG path becomes one stroke at the import weight', len(thin) == 1 and thin[0]['weight'] == 2, len(thin))
+    sq = svg_cases['square'][0]['pts'] if svg_cases['square'] else []
+    xs, ys = [p[0] for p in sq], [p[1] for p in sq]
+    check('a filled square traces to its outline', len(svg_cases['square']) == 1 and 4 <= len(sq) <= 6 and max(xs) - min(xs) > 600 and abs((max(xs) - min(xs)) - (max(ys) - min(ys))) < 1,
+          (len(svg_cases['square']), len(sq)))
+    bar = svg_cases['bar']
+    check('a thin filled bar becomes one centre line, not an outline', len(bar) == 1 and max(p[1] for p in bar[0]['pts']) - min(p[1] for p in bar[0]['pts']) < 3, [len(b['pts']) for b in bar])
+    check('<use> copies are drawn and the <defs> original is not', len(svg_cases['use']) == 2, len(svg_cases['use']))
+    check('a gradient fill is drawn in its stop colour', [p['color'] for p in svg_cases['gradient']] == ['red'], [p['color'] for p in svg_cases['gradient']])
+    many = svg_cases['many']
+    check('a busy SVG stays within the limits', 900 <= len(many) <= 1000 and sum(len(p['pts']) for p in many) <= 249998, len(many))
+    page.keyboard.press('b')
+    names = [l['name'] for l in layers()]
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    page.wait_for_timeout(500)
+    check('choosing a file closes the insert popover and opens the import bar', open_pop() is None and import_bar())
+    check('the preview is shown but not yet in the drawing', len(S()) == 0 and len(preview()) > 0, (len(S()), len(preview())))
+    check('the preview gets no layer before Done', [l['name'] for l in layers()] == names, layers())
+    set_input('importWeight', 5)
+    page.wait_for_timeout(500)
+    check('the import bar weight sets the weight of the preview', preview() and all(w == '10' for w in preview()), set(preview()))
+    b0 = preview_box()
+    centre = ((b0[0] + b0[2]) / 2, (b0[1] + b0[3]) / 2)
+    mouse_path([centre, (centre[0] - 20, centre[1] + 40)])
+    b1 = preview_box()
+    check('dragging the preview moves it', close(b1, (b0[0] - 20, b0[1] + 40, b0[2] - 20, b0[3] + 40), 1.5) and len(S()) == 0, (b0, b1))
+    set_input('importDetail', 70)
+    page.wait_for_timeout(600)
+    b2 = preview_box()
+    check('changing detail keeps the placement', abs(b2[0] - b1[0]) < 6 and abs(b2[1] - b1[1]) < 6, (b1, b2))
+    n = len(preview())
+    page.locator('#importDone').click()
+    check('Done adds the import as it was previewed', len(S()) == n and all(s['weight'] == 5 for s in S()) and not import_bar(), (len(S()), n))
+    check('Done puts the import on a new active layer named after the file', [l['name'] for l in layers()] == names + ['shapes'] and all(s['layer'] == active() == layers()[-1]['id'] for s in S()),
+          (layers(), active()))
+    check('the import stays selected after Done', halos() == n, halos())
+    page.keyboard.press(']')
+    check('the size slider keys reweight the committed import', all(s['weight'] == 5.5 for s in S()), {s['weight'] for s in S()})
+    page.keyboard.press('Control+z')
+    page.keyboard.press('Control+z')
+    check('undo removes the whole import and its layer in one step', len(S()) == 0 and [l['name'] for l in layers()] == names, (len(S()), layers()))
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    page.wait_for_timeout(400)
+    page.keyboard.press('Escape')
+    check('Escape cancels the import', len(S()) == 0 and len(preview()) == 0 and not import_bar())
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    page.wait_for_timeout(400)
+    page.keyboard.press('Control+z')
+    check('undo while placing cancels the import', len(S()) == 0 and not import_bar())
+    page.evaluate('''(svg) => { const dt = new DataTransfer(); dt.items.add(new File([svg], 'drop.svg', { type: 'image/svg+xml' }));
+      document.querySelector('.stage').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); }''', SVG)
+    page.wait_for_timeout(400)
+    check('dropping an SVG on the canvas starts an import', import_bar() and len(preview()) > 0)
+    page.keyboard.press('b')
+    check('picking a tool finishes the import', len(S()) > 0 and not import_bar(), len(S()))
+    act('#clear')
+    page.evaluate('''async (b64) => { const blob = await (await fetch('data:image/png;base64,' + b64)).blob(); const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+      document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }''', png)
+    page.wait_for_timeout(1200)
+    check('pasting an image starts a photo import', import_bar() and len(preview()) > 0, len(preview()))
+    page.keyboard.press('Enter')
+    check('Enter finishes the import', len(S()) > 0 and not import_bar())
+    act('#clear')
+    page.keyboard.press('Shift+F')
+    page.wait_for_timeout(300)
+    check('Shift+F enters full screen', page.evaluate('!!document.fullscreenElement') and page.locator('#fullscreen').get_attribute('aria-pressed') == 'true')
+    box = page.locator('#board').bounding_box()
+    U = box['width'] / 720
+    pen([(100, 100), (300, 200)])
+    p0 = S()[-1]['points'][0]
+    check('pointer maps to the canvas in full screen', abs(p0[0] - 100) < 2 and abs(p0[1] - 100) < 2, p0)
+    page.keyboard.press('Escape')
+    page.wait_for_timeout(300)
+    check('Escape leaves full screen and keeps the drawing', not page.evaluate('!!document.fullscreenElement') and len(S()) == 1,
+          (page.evaluate('document.fullscreenElement?.tagName ?? null'), len(S()), page.evaluate('document.activeElement?.tagName')))
+    act('#fullscreen')
+    page.wait_for_timeout(300)
+    check('the top bar button toggles full screen', page.evaluate('!!document.fullscreenElement'))
+    act('#fullscreen')
+    page.wait_for_timeout(300)
+    box = page.locator('#board').bounding_box()
+    U = box['width'] / 720
+    act('#clear')
     page.locator('[data-tool=line]').click()
     check('tapping another tool selects it without opening options', page.locator('[data-tool=line]').get_attribute('aria-pressed') == 'true' and open_pop() is None)
     page.locator('[data-tool=line]').click()
@@ -724,8 +809,6 @@ with sync_playwright() as p:
     page.wait_for_timeout(3000)
     check('an error toast stays longer', 'shown' in page.locator('#toast').get_attribute('class') and page.locator('#status.error').count() == 1)
 
-    def layers(): return page.evaluate('__doodler.layers')
-    def active(): return page.evaluate('__doodler.active')
     def status(): return page.locator('#status').inner_text()
     def sdj(): return json.loads(page.locator('#out').input_value())['sdj']
     def row(id, sel=''): return f'#layerList [data-layer={id}] {sel}'.strip()
@@ -871,15 +954,16 @@ with sync_playwright() as p:
     act('#load')
     check('a plain SDJ loads as one layer', [l['name'] for l in layers()] == ['Layer 1'] and len(S()) == 2)
 
-    page.locator('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
     page.wait_for_timeout(400)
-    check('an SVG import lands on a new layer named after the file', [l['name'] for l in layers()] == ['Layer 1', 'shapes'] and all(s['layer'] == active() for s in S()[2:]), layers())
-    act('#svgColors', 'select_option', 'snap')
+    page.locator('#importColors').select_option('exact')
     page.wait_for_timeout(400)
-    check('redoing the import reuses its layer', [l['name'] for l in layers()] == ['Layer 1', 'shapes'])
+    page.locator('#importDone').click()
+    check('an SVG import lands on one new layer named after the file', [l['name'] for l in layers()] == ['Layer 1', 'shapes'] and all(s['layer'] == active() for s in S()[2:]), layers())
     act('#text', 'fill', 'Hi')
     act('#writeText')
     page.wait_for_timeout(300)
+    page.locator('#importDone').click()
     check('text lands on a layer named after it', layers()[-1]['name'] == 'Hi' and active() == layers()[-1]['id'])
     page.evaluate('''(svg) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'doodler:import-svg', svg }, origin: 'https://web.slowly.app', source: window }))''', SVG)
     page.wait_for_timeout(500)
@@ -893,6 +977,25 @@ with sync_playwright() as p:
     check('+ is disabled at 10 layers', len(layers()) == 10 and page.locator('#layerAdd').is_disabled())
     act('#layerAdd', 'click', force=True)
     check('the cap holds', len(layers()) == 10)
+    top = active()
+    def on_top(): return sum(s['layer'] == top for s in S())
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    page.wait_for_timeout(400)
+    page.locator('#importDone').click()
+    check('at the cap an import goes to the active layer', len(layers()) == 10 and on_top() > 0 and not import_bar(), (len(layers()), on_top()))
+    page.keyboard.press('Control+z')
+    close_pops()
+    lay(row(top, '.layer-lock'))
+    close_pops()
+    ui('#svgFile').set_input_files(str(OUT / 'shapes.svg'))
+    page.wait_for_timeout(400)
+    page.locator('#importDone').click()
+    check('at the cap with the active layer locked Done says there is no room and keeps the preview',
+          'no room for another layer' in status() and import_bar() and len(preview()) > len(S()) and on_top() == 0 and len(layers()) == 10, status())
+    page.keyboard.press('Escape')
+    lay(row(top, '.layer-lock'))
+    close_pops()
+    check('Escape drops the preview the cap kept', not import_bar() and len(preview()) == len(S()))
     page.set_viewport_size({'width': 900, 'height': 700})
     def toast_on_top(pop):
         toast = page.locator('#toast').bounding_box()

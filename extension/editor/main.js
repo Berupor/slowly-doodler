@@ -3,7 +3,7 @@ import { importSvg } from './import-svg.js';
 import { photoToPolylines, textToPolylines } from './raster.js';
 import * as lib from './library.js';
 import * as P from './precision.js';
-import { createSelector } from './select.js';
+import { createSelector, compose, transformStroke, IDENTITY } from './select.js';
 import * as F from './fill.js';
 import * as L from './layers.js';
 
@@ -25,8 +25,19 @@ const ZOOM_STEP = 1.25;
 const WHEEL_ZOOM = 0.01;
 const WHEEL_CAP = 30;
 const LINE_PX = 33;
+const ESC_AFTER_FULLSCREEN_MS = 500;
+/** @type {Record<string, { detail: number, weight: number, mode: string, fills: string }>} detail and weight seed the import bar sliders, mode is the photo line detector */
+const IMPORT_PRESETS = {
+  outline: { detail: 15, weight: 3, mode: 'edges', fills: 'outline' },
+  sketch: { detail: 35, weight: 1, mode: 'sketch', fills: 'outline' },
+  detailed: { detail: 60, weight: 1, mode: 'edges', fills: 'hatch' },
+  scan: { detail: 50, weight: 3, mode: 'dark', fills: 'outline' },
+};
+const PHOTO_DETAIL_SCALE = 2;
+const PHOTO_STROKES_BASE = 40, PHOTO_STROKES_PER_DETAIL = 10;
+const PHOTO_MIN_LENGTH = [20, 4], PHOTO_MIN_LENGTH_DROP = 0.25;
 /** @type {Record<string, number>} */
-const ZOOM_KEYS = { '=': ZOOM_STEP, '+': ZOOM_STEP, '-': 1 / ZOOM_STEP, '_': 1 / ZOOM_STEP };
+const ZOOM_KEYS ={ '=': ZOOM_STEP, '+': ZOOM_STEP, '-': 1 / ZOOM_STEP, '_': 1 / ZOOM_STEP };
 
 const SLOWLY_FONT_CSS = 'https://fonts.googleapis.com/css?family=Open+Sans:400,600,700&display=swap';
 const SLOWLY_FONTS = ['400 14px "Open Sans"', '600 14px "Open Sans"', '20px slowly-icomoon'];
@@ -106,8 +117,12 @@ const touches = new Map();
 let sessionStart = null;
 /** @type {number | null} */
 let replay = null;
-/** @type {{ key: string, before: Doc } | null} */
-let lastImport = null;
+/**
+ * An import being placed: its strokes are previewed and transformed by the selector but are not part of the drawing until Done.
+ * @typedef {{ kind: 'svg' | 'photo' | 'text', source: string | ImageBitmap, name: string, made: S.Stroke[], palette: S.Palette, m: import('./select.js').Matrix, run: number }} Pending
+ */
+/** @type {Pending | null} */
+let pending = null;
 
 const cx = W / 2, cy = H / 2;
 /** @typedef {(p: number[]) => [number, number]} Transform */
@@ -169,19 +184,19 @@ function setDoc(next, doc) {
   strokes = L.order(next, layers);
 }
 
-/** @param {S.Stroke[]} next @param {{ keepClock?: boolean, keepImport?: boolean, doc?: LayerState }} [opts] */
-function commit(next, { keepClock = false, keepImport = false, doc } = {}) {
+/** @param {S.Stroke[]} next @param {{ keepClock?: boolean, doc?: LayerState }} [opts] */
+function commit(next, { keepClock = false, doc } = {}) {
   undoStack.push({ strokes, palette, layers, active });
   if (undoStack.length > HISTORY_DEPTH) undoStack.shift();
   redoStack = [];
   setDoc(next, doc);
   if (!keepClock) sessionStart = null;
-  if (!keepImport) lastImport = null;
   changed();
 }
 
 /** @param {Snapshot[]} from @param {Snapshot[]} to */
 function restore(from, to) {
+  if (pending) return cancelImport();
   const snap = from.pop();
   if (!snap) return;
   to.push({ strokes, palette, layers, active });
@@ -189,7 +204,6 @@ function restore(from, to) {
   ({ strokes, palette, layers, active } = snap);
   if (layers.some(l => l.id === picked)) active = picked;
   sessionStart = null;
-  lastImport = null;
   changed();
 }
 
@@ -214,7 +228,7 @@ function changed() {
 /** @param {number[][]} points @param {string} token @param {number} w */
 function pathEl(points, token, w) {
   const el = document.createElementNS(NS, 'path');
-  const entry = S.entryFor(token, palette);
+  const entry = S.entryFor(token, pending ? { ...palette, ...pending.palette } : palette);
   el.setAttribute('d', points.length ? S.pathD(points) : '');
   el.setAttribute('stroke', isDark() ? entry.dark : entry.light);
   el.setAttribute('stroke-width', String(S.STROKE_SCALE * w));
@@ -226,12 +240,15 @@ function pathEl(points, token, w) {
 
 const stored = () => ({ sdj: S.buildSdj(strokes, palette), layers: L.pack(strokes, layers, active) });
 
-function renderInk(list = strokes) {
+/** @type {WeakMap<S.Stroke, Element>} */
+const elementOf = new WeakMap();
+function renderInk(list = pending ? [...strokes, ...pending.made] : strokes) {
   const shown = L.shownIds(layers);
   ink.replaceChildren(...list.map(s => {
     const el = pathEl(s.points, s.color, s.weight);
-    if (!shown.has(String(s.layer))) el.style.display = 'none';
+    if (s.layer !== undefined && !shown.has(s.layer)) el.style.display = 'none';
     strokeOf.set(el, s);
+    elementOf.set(s, el);
     return el;
   }));
   selector.refresh();
@@ -400,9 +417,15 @@ function pickAt(e) {
 }
 const selector = createSelector({
   board, typing: TYPING_TARGET, gapMs: STROKE_GAP_MS, say, pathEl, boardPoint, pxPerUnit,
-  strokes: () => strokes, palette: () => palette, commit: next => commit(next), addBlocked, sent,
+  strokes: () => pending ? pending.made : strokes, palette: () => palette, addBlocked, sent,
   pickable: s => L.editableIds(layers).has(String(s.layer)),
-  amend: next => { setDoc(next); sessionStart = null; changed(); },
+  commit: next => pending ? placePending(next) : commit(next),
+  amend: next => {
+    if (pending) return placePending(next);
+    setDoc(next); sessionStart = null; changed();
+  },
+  elementOf: s => elementOf.get(s),
+  transformed: m => { if (pending) pending.m = compose(m, pending.m); },
   setTool: t => { tool = t; buildBars(); },
   addPalette: extra => {
     palette = { ...palette, ...extra };
@@ -653,6 +676,7 @@ $('tools').append(...toolButtons);
 $('selectTool').onclick = () => { tool = 'select'; buildBars(); };
 
 function buildBars() {
+  if (pending && tool !== 'select') finishImport();
   for (const b of toolButtons) {
     const t = String(b.dataset.tool);
     b.setAttribute('aria-pressed', String(tool === t));
@@ -662,7 +686,13 @@ function buildBars() {
   const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
   pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
     content: span('drawing-color-swatch', { background: S.entryFor(t, palette)[isDark() ? 'dark' : 'light'] }),
-    title: t, on: color === t && tool !== 'eraser', pick: () => { color = t; if (tool === 'eraser') tool = 'pen'; selector.paint(t); },
+    title: t, on: color === t && tool !== 'eraser', pick: () => {
+      color = t;
+      if (tool === 'eraser') tool = 'pen';
+      if (!pending) return selector.paint(t);
+      $('importColors').value = 'one';
+      retrace();
+    },
   })));
   board.classList.toggle('erasing', tool === 'eraser');
   setPicking(false);
@@ -683,16 +713,21 @@ sizeRail.prepend(...S.SIZES.map(w => {
 sizeRail.onpointerenter = showWeight;
 let railFlash = 0;
 
+const shownWeight = () => pending ? Number($('importWeight').value) : selector.weight ?? weight;
+
 function showWeight() {
-  $('weight').value = String(weight);
-  $('weightOut').textContent = String(weight);
-  sizeRail.style.setProperty('--f', railFraction(weight));
-  const d = Math.max(2, S.STROKE_SCALE * weight * board.clientWidth / W) + 'px';
+  const w = shownWeight();
+  $('weight').value = String(w);
+  $('weightOut').textContent = String(w);
+  sizeRail.style.setProperty('--f', railFraction(w));
+  const d = Math.max(2, S.STROKE_SCALE * w * board.clientWidth / W) + 'px';
   Object.assign($('weightDot').style, { width: d, height: d, background: S.entryFor(color, palette)[isDark() ? 'dark' : 'light'] });
 }
 
 function setWeight(w) {
-  weight = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
+  w = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
+  if (pending) return setImportWeight(w);
+  weight = w;
   if (tool === 'eraser' && !cutMode()) tool = 'pen';
   selector.reweight(weight);
   buildBars();
@@ -750,33 +785,34 @@ function useSdj(sdj, { append, layers: packed } = {}) {
   return true;
 }
 
-/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} extraPalette @param {string | null} layerName null puts the strokes on the active layer @param {boolean} [bottom] the new layer goes under the others and the active layer stays */
-function applyImport(key, polylines, extraPalette, layerName, bottom = false) {
-  const rerun = lastImport?.key === key;
-  const before = lastImport && rerun ? lastImport.before : { strokes, layers, active };
-  if (layerName !== null && before.layers.length >= L.MAX_LAYERS) return say(LAYER_CAP, true);
-  const why = layerName === null && L.blocked(before.layers, before.active);
-  if (why) return say(why, true);
-  const doc = layerName === null ? before : bottom ? { ...L.add(before.layers, null, layerName), active: before.active } : L.add(before.layers, before.active, layerName);
-  const start = before.strokes.length ? S.endTime(before.strokes) + STROKE_GAP_MS : 0;
-  const into = bottom ? doc.layers[0].id : doc.active;
-  const added = S.timed(polylines, start).map(s => ({ ...s, layer: into }));
+/**
+ * Hands imported strokes to the drawing as one undo step, on a new layer or, with no room for one, on the active layer.
+ * @param {S.Stroke[]} made @param {S.Palette} extraPalette @param {string | null} layerName null puts the strokes on the active layer
+ * @param {boolean} [bottom] the new layer goes under the others and the active layer stays
+ * @returns {{ added: S.Stroke[], err: string | null } | null} null when the strokes have nowhere to go
+ */
+function applyImport(made, extraPalette, layerName, bottom = false) {
+  const room = layerName !== null && layers.length < L.MAX_LAYERS;
+  const why = !room && L.blocked(layers, active);
+  if (why) {
+    say(layerName === null ? why : LAYER_CAP, true);
+    return null;
+  }
+  const doc = !room ? { layers, active } : bottom ? { ...L.add(layers, null, layerName), active } : L.add(layers, active, layerName);
+  const into = room && bottom ? doc.layers[0].id : doc.active;
+  const added = made.map(s => ({ ...s, layer: into }));
   palette = { ...palette, ...extraPalette };
   for (const t of Object.keys(extraPalette)) if (!customColors.includes(t)) customColors.push(t);
-  if (rerun) {
-    setDoc([...before.strokes, ...added], doc);
-    changed();
-  } else {
-    commit([...before.strokes, ...added], { keepImport: true, doc });
-    lastImport = { key, before };
-  }
+  commit([...strokes, ...added], { doc });
   buildBars();
   const err = S.validate(S.buildSdj(sent(), palette));
-  say(err && err !== 'nothing drawn' ? `imported ${added.length} strokes, but ${err}` : `imported ${added.length} strokes`, !!err && err !== 'nothing drawn');
+  return { added, err: err === 'nothing drawn' ? null : err };
 }
 
 /** @param {string} file */
 const baseName = file => file.replace(/\.[^.]+$/, '') || file;
+
+const nextStart = () => strokes.length ? S.endTime(strokes) + STROKE_GAP_MS : 0;
 
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r)));
 
@@ -803,49 +839,140 @@ async function busy(label, work) {
   }
 }
 
-/** @type {{ text: string, remix: boolean, layer: string | null } | null} */
-let svgSource = null;
-function runSvg(key = 'svg') {
-  if (!svgSource) return;
-  const source = svgSource;
-  return busy('importing svg', async (onProgress, current) => {
-    try {
-      const { polylines, palette: extra, dropped } = await importSvg(source.text,
-        { fills: $('svgFills').value, colors: $('svgColors').value, remix: source.remix, onProgress });
-      if (!current()) return;
-      applyImport(key, polylines, extra, source.layer, source.remix);
-      if (dropped) say(`${$('status').textContent}, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes`);
-    } catch (err) { say('svg import failed: ' + errorText(err), true); }
-  });
-}
-
 /** @param {unknown} err */
 const errorText = err => err instanceof Error ? err.message : String(err);
 
-/** @type {{ bitmap: ImageBitmap, key: string, name: string } | null} */
-let photoSource = null;
-function runPhoto() {
-  if (!photoSource) return;
-  const source = photoSource;
-  return busy('tracing', async () => {
-    applyImport(source.key, photoToPolylines(source.bitmap, {
-      mode: $('photoMode').value, detail: Number($('photoDetail').value), minLength: Number($('photoMin').value),
-      color, weight, photoColors: $('photoColors').checked,
-      zoom: Number($('photoZoom').value), panX: Number($('photoPanX').value), panY: Number($('photoPanY').value),
-    }), {}, source.name);
-  });
+/** @param {string} id @param {number} value */
+function setRange(id, value) {
+  $(id).value = String(value);
+  $(id + 'Out').textContent = $(id).value;
 }
 
-/** @type {string | null} */
-let textKey = null;
-function runText() {
-  const text = $('text').value.trim();
-  if (!text) return say('type some text first', true);
-  const key = textKey ??= 'text:' + Date.now();
-  return busy('writing', async () => {
-    applyImport(key, textToPolylines(text, {
-      font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight,
-    }), {}, text);
+/** @param {Pending} p @param {(fraction: number) => void} onProgress @returns {Promise<{ polylines: S.Polyline[], palette?: S.Palette, dropped?: number }>} */
+async function trace(p, onProgress) {
+  const preset = IMPORT_PRESETS[$('importPreset').value];
+  const detail = Number($('importDetail').value), w = Number($('importWeight').value), colors = $('importColors').value;
+  if (p.kind === 'svg') return importSvg(String(p.source), { fills: preset.fills, colors, color, weight: w, detail, onProgress });
+  if (p.kind === 'photo') return {
+    polylines: photoToPolylines(/** @type {ImageBitmap} */ (p.source), {
+      mode: preset.mode, detail: PHOTO_DETAIL_SCALE * detail, maxStrokes: PHOTO_STROKES_BASE + PHOTO_STROKES_PER_DETAIL * detail,
+      minLength: Math.max(PHOTO_MIN_LENGTH[1], PHOTO_MIN_LENGTH[0] - detail * PHOTO_MIN_LENGTH_DROP), color, weight: w, photoColors: colors !== 'one',
+    }),
+  };
+  return { polylines: textToPolylines($('text').value.trim(), { font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight: w }) };
+}
+
+/** @param {S.Stroke[]} made */
+function placePending(made) {
+  if (!pending) return;
+  pending.made = made;
+  selector.hold(made);
+  renderInk();
+}
+
+function retrace() {
+  const p = pending;
+  if (!p) return;
+  const run = ++p.run;
+  return busy(p.kind === 'svg' ? 'importing svg' : p.kind === 'photo' ? 'tracing' : 'writing', async onProgress => {
+    try {
+      const { polylines, palette: extra = {}, dropped } = await trace(p, onProgress);
+      if (pending !== p || run !== p.run) return;
+      p.palette = extra;
+      placePending(S.timed(polylines, nextStart()).map(s => transformStroke(s, p.m)));
+      const points = p.made.reduce((a, s) => a + s.points.length, 0);
+      say(`${p.made.length} strokes, ${points} points` + (dropped ? `, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes` : ''));
+    } catch (err) {
+      if (pending !== p) return;
+      say(`${p.kind} import failed: ${errorText(err)}`, true);
+      if (!p.made.length) cancelImport();
+    }
+  });
+}
+const retraceSoon = debounce(retrace);
+
+function applyPreset() {
+  const preset = IMPORT_PRESETS[$('importPreset').value];
+  setRange('importDetail', preset.detail);
+  setRange('importWeight', preset.weight);
+}
+
+/** @param {Pending['kind']} kind @param {string | ImageBitmap} source @param {string} name of the layer it lands on, a text import is named after its text */
+function startImport(kind, source, name) {
+  if (pending) finishImport();
+  if (pending) return;
+  stopReplay();
+  /** @type {HTMLElement | null} */ (document.querySelector('.pop:popover-open'))?.hidePopover();
+  pending = { kind, source, name, made: [], palette: {}, m: IDENTITY, run: 0 };
+  const presetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('importPreset'));
+  const colorSelect = /** @type {HTMLSelectElement} */ (document.getElementById('importColors'));
+  presetSelect.hidden = $('importDetailField').hidden = kind === 'text';
+  for (const o of presetSelect.options) o.hidden = o.value === 'scan' && kind !== 'photo';
+  for (const o of colorSelect.options) o.hidden = (o.value === 'exact' && kind !== 'svg') || (o.value !== 'one' && kind === 'text');
+  if (presetSelect.selectedOptions[0]?.hidden) presetSelect.value = 'outline';
+  colorSelect.value = kind === 'svg' ? 'snap' : 'one';
+  applyPreset();
+  $('importBar').hidden = false;
+  tool = 'select';
+  buildBars();
+  retrace();
+}
+
+function finishImport() {
+  const p = pending;
+  if (!p) return;
+  pending = null;
+  const done = p.made.length ? applyImport(p.made, p.palette, (p.kind === 'text' && $('text').value.trim()) || p.name) : null;
+  if (p.made.length && !done) {
+    pending = p;
+    return;
+  }
+  $('importBar').hidden = true;
+  selector.hold(null);
+  if (!done) return renderInk();
+  selector.select(done.added);
+  say(done.err ? `added ${done.added.length} strokes, but ${done.err}` : `added ${done.added.length} strokes, still selected: the size slider changes their weight`, !!done.err);
+}
+
+function cancelImport() {
+  if (!pending) return;
+  pending = null;
+  $('importBar').hidden = true;
+  selector.hold(null);
+  renderInk();
+  showWeight();
+  say('import cancelled');
+}
+
+/** @param {number} w */
+function setImportWeight(w) {
+  setRange('importWeight', w);
+  showWeight();
+  if (!pending) return;
+  placePending(pending.made.map(s => ({ ...s, weight: w })));
+  if (pending.kind === 'svg') retraceSoon();
+}
+
+/** @param {File} f */
+async function importFile(f) {
+  try {
+    if (f.type === 'image/svg+xml' || /\.svg$/i.test(f.name)) startImport('svg', await f.text(), baseName(f.name));
+    else if (f.type.startsWith('image/')) startImport('photo', await createImageBitmap(f), baseName(f.name));
+    else say(`cannot import ${f.type || f.name}: choose an image or an SVG`, true);
+  } catch (err) { say('import failed: ' + errorText(err), true); }
+}
+
+/** @param {string} text @param {boolean} replace */
+function importRemix(text, replace) {
+  return busy('loading the drawing', async onProgress => {
+    try {
+      const { polylines, palette: extra } = await importSvg(text, { remix: true, onProgress });
+      const fresh = replace || !strokes.length;
+      if (fresh) commit([], { doc: L.initial(L.BACKGROUND) });
+      const done = applyImport(S.timed(polylines, nextStart()), extra, fresh ? null : L.BACKGROUND, true);
+      if (!done) return;
+      say(done.err ? `loaded, but ${done.err}` : replace ? 'attached drawing loaded, sending replaces it' : 'drawing loaded, draw on top of it', !!done.err);
+    } catch (err) { say('loading the drawing failed: ' + errorText(err), true); }
   });
 }
 
@@ -872,11 +999,6 @@ function debounce(fn, ms = 160) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let t;
   return () => { clearTimeout(t); t = setTimeout(fn, ms); };
-}
-
-/** @param {string} prefix @param {() => void} fn */
-function rerunIf(prefix, fn) {
-  return debounce(() => { if (lastImport?.key?.startsWith(prefix)) fn(); });
 }
 
 /** @param {S.Stroke[]} list */
@@ -1257,38 +1379,39 @@ $('refFlip').onclick = () => { refPose.flip = -refPose.flip; applyRef(); };
 $('refScale').oninput = () => { refPose.scale = Number($('refScale').value); applyRef(); };
 $('refReset').onclick = resetRef;
 
-$('svgFile').onchange = async () => {
-  const f = $('svgFile').files?.[0];
-  if (!f) return;
-  svgSource = { text: await f.text(), remix: false, layer: baseName(f.name) };
-  lastImport = null;
-  runSvg('svg:' + Date.now());
-  $('svgFile').value = '';
+for (const id of ['svgFile', 'photoFile']) $(id).onchange = () => {
+  const f = $(id).files?.[0];
+  $(id).value = '';
+  if (f) importFile(f);
 };
-const rerunSvg = rerunIf('svg', () => lastImport && runSvg(lastImport.key));
-$('svgFills').onchange = rerunSvg;
-$('svgColors').onchange = rerunSvg;
-
-$('photoFile').onchange = async () => {
-  const f = $('photoFile').files?.[0];
+const stage = /** @type {HTMLElement} */ (document.querySelector('.stage'));
+stage.addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
+stage.addEventListener('drop', e => {
+  const f = e.dataTransfer?.files[0];
   if (!f) return;
-  photoSource = { bitmap: await createImageBitmap(f), key: 'photo:' + Date.now(), name: baseName(f.name) };
-  $('photoFile').value = '';
-  for (const id of ['photoZoom', 'photoPanX', 'photoPanY']) {
-    $(id).value = $(id).defaultValue;
-    $(id + 'Out').textContent = $(id).value + (id === 'photoZoom' ? '×' : '');
-  }
-  runPhoto();
-};
-const rerunPhoto = rerunIf('photo', runPhoto);
-for (const id of ['photoMode', 'photoDetail', 'photoMin', 'photoZoom', 'photoPanX', 'photoPanY', 'photoColors']) $(id).addEventListener('input', rerunPhoto);
-for (const [id, out, unit] of [['photoDetail', 'photoDetailOut', ''], ['photoMin', 'photoMinOut', ''], ['textSize', 'textSizeOut', ''],
-  ['photoZoom', 'photoZoomOut', '×'], ['photoPanX', 'photoPanXOut', ''], ['photoPanY', 'photoPanYOut', '']])
-  $(id).addEventListener('input', () => { $(out).textContent = $(id).value + unit; });
+  e.preventDefault();
+  importFile(f);
+});
+document.addEventListener('paste', e => {
+  if (e.target instanceof Element && e.target.closest(TYPING_TARGET)) return;
+  const file = [...(e.clipboardData?.files ?? [])].find(f => f.type.startsWith('image/'));
+  const text = e.clipboardData?.getData('text/plain') ?? '';
+  if (file) importFile(file);
+  else if (/^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text)) startImport('svg', text, 'SVG');
+  else return;
+  e.preventDefault();
+}, true);
 
-$('writeText').onclick = () => { textKey = null; lastImport = null; runText(); };
-const rerunText = rerunIf('text', runText);
-for (const id of ['font', 'textSize', 'textAlign']) $(id).addEventListener('input', rerunText);
+$('importPreset').onchange = () => { applyPreset(); retrace(); };
+$('importDetail').addEventListener('input', () => { $('importDetailOut').textContent = $('importDetail').value; retraceSoon(); });
+$('importWeight').addEventListener('input', () => setImportWeight(Number($('importWeight').value)));
+$('importColors').onchange = retrace;
+$('importDone').onclick = finishImport;
+$('importCancel').onclick = cancelImport;
+
+$('textSize').addEventListener('input', () => { $('textSizeOut').textContent = $('textSize').value; });
+$('writeText').onclick = () => $('text').value.trim() ? startImport('text', '', 'Text') : say('type some text first', true);
+for (const id of ['font', 'textSize', 'textAlign', 'text']) $(id).addEventListener('input', () => { if (pending?.kind === 'text') retraceSoon(); });
 
 $('libSave').onclick = libOp('save', async () => {
   if (!strokes.length) return say('nothing to save', true);
@@ -1379,10 +1502,38 @@ document.addEventListener('keydown', e => {
   else if (k === '0') { e.preventDefault(); setView(0, 0, W); }
   else if (!e.ctrlKey && !e.metaKey && k === 'i') setPicking(!picking);
   else if (!e.ctrlKey && !e.metaKey && k === 'g') { prec.grid = !prec.grid; applyPrecision(); }
+  else if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && k === 'f') toggleFullscreen();
   else if (!e.ctrlKey && !e.metaKey && TOOL_KEYS[k]) { tool = TOOL_KEYS[k]; buildBars(); }
-  else if (k === '[') setWeight(weight - 0.5);
-  else if (k === ']') setWeight(weight + 0.5);
+  else if (k === '[') setWeight(shownWeight() - 0.5);
+  else if (k === ']') setWeight(shownWeight() + 0.5);
+  else if (k === 'enter' && pending && !(e.target instanceof Element && e.target.closest('#importBar, [popover]'))) {
+    e.preventDefault();
+    finishImport();
+  }
 });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || (e.target instanceof Element && e.target.closest(TYPING_TARGET))) return;
+  if (document.querySelector('.pop:popover-open')) return;
+  if (pending) return cancelImport();
+  if (document.fullscreenElement) return void document.exitFullscreen();
+  if (!embedded || selector.size || performance.now() - fullscreenLeftAt < ESC_AFTER_FULLSCREEN_MS) return;
+  closeEditor();
+}, true);
+
+let fullscreenLeftAt = -Infinity;
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(err => say('full screen is not available: ' + errorText(err), true));
+}
+$('fullscreen').hidden = !document.fullscreenEnabled;
+$('fullscreen').onclick = toggleFullscreen;
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  // Chrome leaves full screen on Esc itself and may still deliver that keydown afterwards; it must not also close the editor
+  if (!on) fullscreenLeftAt = performance.now();
+  $('fullscreen').setAttribute('aria-pressed', String(on));
+});
+window.addEventListener('resize', () => { setView(view.x, view.y, view.w); showWeight(); });
 document.addEventListener('keyup', e => {
   if (e.key !== ' ') return;
   setSpace(false);
@@ -1394,7 +1545,8 @@ $('zoom').onclick = () => setView(0, 0, W);
 
 $('prefsTab').hidden = embedded;
 $('close').hidden = !embedded;
-$('close').onclick = () => window.parent.postMessage({ type: 'doodler:close' }, SLOWLY_ORIGIN);
+const closeEditor = () => window.parent.postMessage({ type: 'doodler:close' }, SLOWLY_ORIGIN);
+$('close').onclick = closeEditor;
 const send = $('send');
 send.hidden = !embedded;
 send.onclick = () => {
@@ -1410,12 +1562,8 @@ send.onclick = () => {
 window.addEventListener('message', e => {
   if (e.source !== window.parent || e.origin !== SLOWLY_ORIGIN) return;
   if (e.data?.type === 'doodler:import-svg') {
-    const fresh = e.data.replace || !strokes.length;
-    if (fresh) commit([], { doc: L.initial(L.BACKGROUND) });
-    svgSource = { text: e.data.svg, remix: true, layer: fresh ? null : L.BACKGROUND };
-    lastImport = null;
-    runSvg('svg:remix:' + Date.now())?.then(() => say(e.data.replace
-      ? 'attached drawing loaded, sending replaces it' : 'drawing loaded, draw on top of it'));
+    cancelImport();
+    importRemix(e.data.svg, !!e.data.replace);
   } else if (e.data?.type === 'doodler:friends') setFriends(e.data);
 });
 

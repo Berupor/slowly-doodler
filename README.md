@@ -10,7 +10,7 @@ An SVG city, 137 strokes, imported and replayed. Nobody draws that many straight
 
 ![SVG imported and replayed stroke by stroke](docs/scene.gif)
 
-An image and the line art it turns into (Photo to Line Art, edges mode):
+An image and the line art it turns into (Insert > Photo, Detailed style):
 
 ![An image next to its line art](docs/photo.png)
 
@@ -31,7 +31,11 @@ No store listing. `chrome://extensions`, Developer mode, Load unpacked, pick `ex
 
 - Esc closes Doodler without sending.
 
-The top bar holds Gallery (saved drawings), Actions (add SVG, photo or text, reference image, Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers and colour on the right. Tap the active tool again for its options. Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer (a Remix background at the bottom), hidden or locked layers are out of reach of the eraser and lasso, and a locked layer still works as a fill outline and an eyedropper source but is not drawn on. Paste goes to the active layer, Ctrl+D copies stay on the layer of the original. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight.
+The top bar holds Gallery (saved drawings), `+` Insert (photo, SVG, text, reference image), Actions (Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers, colour, full screen and replay on the right. Tap the active tool again for its options. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.
+
+Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer named after the source (a Remix background at the bottom), hidden or locked layers are out of reach of the eraser and lasso, and a locked layer still works as a fill outline and an eyedropper source but is not drawn on. Paste goes to the active layer, Ctrl+D copies stay on the layer of the original.
+
+A photo or SVG, chosen in Insert or dropped or pasted on the canvas, lands as a preview in a selection frame: drag it, resize it by the corners, pick a style (Outline, Sketch, Detailed, Ink scan for photos), detail, line weight and pen or original colours, then Done (Enter) adds it on a new layer as one undo step or Cancel (Esc) drops it. Photos go through a bilateral filter, Canny or difference-of-Gaussians edges, Zhang-Suen thinning and junction-aware tracing. In SVGs, `<use>`, transforms and gradients are resolved, stroked paths become centre lines, filled shapes thinner than 10 units (text converted to paths, outlined logos) become centre lines too, and thicker fills are drawn by their outline or hatched. After Done the import stays selected, so the size slider still changes its weight.
 
 By hand, with Kaleido 12 symmetry and rainbow:
 
