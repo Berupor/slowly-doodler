@@ -27,7 +27,7 @@
         <div class="order-2 flex-shrink-0"><div class="dropdown"><button aria-haspopup="true" aria-expanded="false" id="dropdown-basic" type="button" class="dropdown-toggle btn btn-toolbar"><i class="icon-sort text-black-50"></i></button></div></div>
         <div class="order-1 flex-grow-1"><div class="h6 text-primary mb-0"><i class="icon-users" style="margin-inline-end: 8px;"></i>Friends</div><div class="text-black-50 small"><span class="pr-1">Friends 20 </span><span>Hidden 0</span></div></div>
       </div>
-      <div class="overflow" dir="ltr"><div style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div id="friends" style="position: absolute; inset: 0px; overflow: scroll; margin-right: -15px; margin-bottom: -15px;"></div></div></div>
+      <div class="overflow" dir="ltr"><div style="position: relative; overflow: hidden; width: 100%; height: 100%;"><div id="friends" style="position: absolute; inset: 0px; overflow: scroll; margin-right: -15px; margin-bottom: -15px; padding-right: 14px;"></div><div style="position: absolute; width: 8px; right: 2px; bottom: 2px; top: 2px; border-radius: 4px;"><div style="position: relative; display: block; width: 100%; height: 70%; border-radius: inherit; background-color: rgba(0, 0, 0, 0.25);"></div></div></div></div>
     </div>
     <div class="py-2 text-left">
       <div class="text-lighter smaller p-2">Slowly Web ( v5.1.3 )<br><a href="#" class="text-lighter">Terms of Service</a>． <a href="#" class="text-lighter">Privacy Policy</a></div>
@@ -105,14 +105,15 @@ Mika</div>
   document.querySelectorAll('img[data-stamp]').forEach(img => { img.src = STAMP; });
 
   const FRIENDS = [
-    ['Mika', 'Japan', '10/29/2026'], ['Lena', 'Estonia', '10/28/2026'], ['Joao', 'Portugal', '10/27/2026'], ['Amara', 'Nigeria', '10/25/2026'],
-    ['Noor', 'Jordan', '10/21/2026'], ['Tomas', 'Chile', '10/19/2026'], ['Sofia', 'Italy', '10/12/2026'], ['Kenji', 'Japan', '10/03/2026'],
-    ['Ivy', 'Canada', '09/28/2026'], ['Omar', 'Egypt', '09/20/2026'], ['Elif', 'Turkey', '09/11/2026'], ['Pavel', 'Czechia', '08/30/2026'],
+    ['Mika', 'Japan', ''], ['Lena', 'Estonia', '9:16 PM'], ['Joao', 'Portugal', 'Oct 25'], ['Amara', 'Nigeria', 'Oct 21'],
+    ['Noor', 'Jordan', 'Oct 19'], ['Tomas', 'Chile', 'Oct 12'], ['Sofia', 'Italy', 'Oct 3'], ['Kenji', 'Japan', 'Sep 28'],
+    ['Ivy', 'Canada', 'Sep 20'], ['Omar', 'Egypt', 'Sep 11'], ['Elif', 'Turkey', 'Aug 30'], ['Pavel', 'Czechia', 'Jul 6'],
   ];
   const side = FRIENDS.map(([name, country, date], i) => {
+    const slot = html => `<span class="d-inline-block text-center" style="width: 16px">${html}</span>`;
     const right = i === 0
       ? '<img data-avatar="90" height="14">'
-      : `<div class="text-lighter smallest">${date}<i class="icon-${i % 3 ? 'reply text-lighter' : 'circle text-calm'} icon-smallest pl-1"></i></div>`;
+      : `<div class="text-lighter smallest d-flex align-items-center">${date}${slot(`<i class="icon-${i % 3 ? 'reply text-lighter' : 'circle text-calm'} icon-smallest"></i>`)}</div>`;
     return `<a class="no-underline${i === 0 ? ' selected' : ''}" href="#"><div class="d-flex border-bottom "><div class="col-pixel-width-50 pl-2 pt-2"><img data-avatar="${i + 1}" class="rounded-circle avatar-border " width="42" height="42"></div><div class="col pl-2 pt-2 pb-2 text-truncate"><div class="d-flex text-truncate"><h6 class="col pl-0 pr-0 mt-1 mb-0 text-truncate ">${name}</h6><div class="col-auto pr-0 pl-1 d-flex align-items-start">${right}</div></div><div class="text-muted d-flex p-0 m-0 align-items-center small text-truncate"><span class="text-truncate flex-grow-1">${country}</span></div></div></div></a>`;
   }).join('');
   document.getElementById('friends').innerHTML = side;

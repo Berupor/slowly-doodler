@@ -1,18 +1,16 @@
 # slowly-doodler
 
-Chrome extension for web.slowly.app. It replaces the drawing editor in the letter composer with a bigger one and puts the result back into Slowly's own editor, so the letter is sent as a normal Slowly drawing. Unofficial, not affiliated with Slowly.
+Chrome extension for web.slowly.app. It replaces the drawing editor in the letter composer with a bigger one and hands the result back to Slowly's own editor, so the letter goes out as a normal Slowly drawing. Unofficial, not affiliated with Slowly.
 
-Slowly's editor has 12 colors, 3 brush sizes and your finger. Doodler also takes what you already have: an SVG or any image becomes pen strokes, so you don't have to be able to draw. Text is written out as pen strokes too. For drawing by hand it adds symmetry brushes and a tracing reference. Every import ends up as ordinary strokes with a timeline, so the recipient's replay looks hand drawn.
+Besides drawing by hand (symmetry brushes, tracing reference, layers, fill, lasso), it turns an SVG, a photo or text into pen strokes. Every import ends up as ordinary strokes with a timeline, so the recipient's replay looks hand drawn.
 
 ![Remix a received drawing, draw over it, send](docs/flow.gif)
 
-An SVG city, 137 strokes, imported and replayed. Nobody draws that many straight windows with a finger:
+![An image next to its line art](docs/photo.png)
 
 ![SVG imported and replayed stroke by stroke](docs/scene.gif)
 
-An image and the line art it turns into (Insert > Photo, Detailed style):
-
-![An image next to its line art](docs/photo.png)
+![Kaleido 12 symmetry with rainbow strokes](docs/draw.gif)
 
 ## Install
 
@@ -20,56 +18,47 @@ No store listing. `chrome://extensions`, Developer mode, Load unpacked, pick `ex
 
 ## Use
 
-- Click the drawing button in the composer, or the edit button on an attached drawing. Doodler opens over the page. Shift-click opens Slowly's own editor.
+- Click the drawing button in the composer, or the edit button on an attached drawing. Shift-click opens Slowly's own editor.
 - Hover a received drawing: Remix opens it in Doodler, Save puts it in the library.
 
   ![Save and Remix over a received drawing](docs/hover.png)
 
-- Send (the check mark) closes Doodler, opens Slowly's editor invisibly, restores the drawing into it, presses its Done button and attaches it to the letter.
+- Send (the check mark) closes Doodler and attaches the drawing to the letter. Esc closes without sending.
 
   ![A drawing attached to the reply](docs/attached.png)
 
-- Esc closes Doodler without sending.
-
-The top bar holds Gallery (saved drawings), `+` Insert (a menu of Photo, SVG, Text and Reference image), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers, colour, full screen, replay and a more menu (friend picker, dark theme, shortcuts, an Advanced block with the raw sdj) on the right. Tap the active tool again for its options; hold or right-click Replay for its speed and pause skipping. The strip on the left has size, smoothing, the eyedropper, undo/redo and Clear canvas (one undo step brings the strokes back). Toasts show at the bottom centre, clear of open popovers. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.
-
-Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer named after the source (a Remix background at the bottom), hidden or locked layers are out of reach of the eraser and lasso, and a locked layer still works as a fill outline and an eyedropper source but is not drawn on. Paste goes to the active layer, Ctrl+D copies stay on the layer of the original.
-
-A reference image (Insert > Reference image) is for tracing: it sits under the drawing, is never exported or sent, and shows as a "Reference" row at the bottom of the Layers popover while one is loaded. Expand the row for opacity, scale, Move (drag the image on the canvas), Rotate 90°, Flip, Reset and Remove.
-
-A photo or SVG, chosen in Insert or dropped or pasted on the canvas, lands as a preview in a selection frame: drag it, resize it by the corners, pick a style (Outline, Sketch, Detailed, Ink scan for photos), detail, line weight and pen or original colours, then Done (Enter) adds it on a new layer as one undo step or Cancel (Esc) drops it. Resizing the preview retraces it at the new size: an enlarged photo is traced from the source pixels it now covers, so it gains detail, and whatever ends up past the canvas edge is cut off. Photos go through a bilateral filter, Canny edges on colour (so a subject stands out from a background of the same brightness) or difference-of-Gaussians edges, Zhang-Suen thinning and junction-aware tracing. Outline and Detailed weigh edges by a saliency map with a centre prior, so the subject keeps its lines and background texture such as sand or rock drops out first. In SVGs, `<use>`, transforms and gradients are resolved, stroked paths become centre lines, filled shapes thinner than 10 units (text converted to paths, outlined logos) become centre lines too, and thicker fills are drawn by their outline or hatched. Lines under a fill painted above them are removed, as Illustrator's Pathfinder Trim does, so a background hatch stops at the shapes in front of it. After Done the import stays selected, so the size slider still changes its weight.
-
-By hand, with Kaleido 12 symmetry and rainbow:
-
-![Kaleido 12 symmetry with rainbow strokes](docs/draw.gif)
-
-Gallery in the dark theme:
+- `+` Insert takes a photo, SVG, text or reference image. The import lands as a preview you can move, resize and restyle (Outline, Sketch, Detailed, Ink scan), then Done adds it on a new layer. A reference image is for tracing and never sent; its opacity, scale and position live in a Reference row at the bottom of Layers.
+- Layers (up to 10) exist only in the editor and the library; Send flattens the visible ones.
+- The `...` menu has the friend picker, dark theme, shortcuts and an Advanced block with the raw sdj. Hold or right-click Replay for its speed; Clear sits at the bottom of the left strip.
+- Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.
 
 ![Gallery in the dark theme](docs/library.png)
 
-The colour popover shows the 12 base colours and a Custom row below them: the + swatch opens the system colour picker, a right-click or long-press removes a custom colour. Weights other than 1, 3, 6 and colors outside the 12 base ones are marked "experimental": they pass Slowly's validation but have not been checked in the mobile apps, and the colour popover says so while a custom colour is selected.
+Weights other than 1, 3, 6 and colors outside the 12 base ones are marked "experimental": they pass Slowly's validation but have not been checked in the mobile apps, and the colour popover says so while a custom colour is selected.
 
 ## How it works
 
-`content/hook.js` runs in the page's own JS world at document start and patches `Storage.prototype.getItem`. Slowly's editor offers to restore a draft from `slowly-drawing-recovery:*` in localStorage; when Doodler has a drawing waiting under `doodler:pending`, the patched `getItem` returns it for that key once. The content script then clicks Restore and Done like a user would. No request to Slowly is forged, the page does its own upload.
+`content/hook.js` runs in the page's JS world at document start and patches `Storage.prototype.getItem`. Slowly's editor offers to restore a draft from `slowly-drawing-recovery:*`; when Doodler has a drawing under `doodler:pending`, the patched `getItem` returns it for that key once. The content script then clicks Restore and Done like a user would. No request to Slowly is forged, the page does its own upload.
 
-`editor/sdj.js` mirrors Slowly's drawing format and limits (1000 strokes, 19999 points per stroke, 249998 in total, 32 palette entries, weight 0.5-8, canvas 720x960). `content/friends.js` recomputes Slowly's friend URL hashes (Hashids, salt `slowlyweb`) to preselect the friend whose letter is open.
+`editor/sdj.js` mirrors Slowly's drawing format and limits. `content/friends.js` recomputes Slowly's friend URL hashes to preselect the friend whose letter is open. The editor runs in an extension iframe with Slowly's stylesheets passed in. The library lives in extension storage.
 
-The editor runs in an iframe from the extension, with Slowly's stylesheets passed in so it looks native. The library lives in extension storage (`unlimitedStorage`, large drawings are big). Permissions are `storage` and `unlimitedStorage`, host access is `https://web.slowly.app/*` only. Nothing is sent anywhere except by Slowly itself.
+Permissions are `storage` and `unlimitedStorage`, host access is `https://web.slowly.app/*` only. The only other request is the Open Sans stylesheet from Google Fonts.
 
 ## What breaks
 
-The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When a selector the extension expects is missing, it logs `doodler_selector_missing` and shows a toast once per session. More > Advanced still gives you the sdj to copy.
-
-If Slowly changes the drawing format, `editor/sdj.js` and the validator copy used by the e2e test need to follow.
+The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When one is missing, the extension logs `doodler_selector_missing` and shows a toast once per session. More > Advanced still gives you the sdj to copy. If Slowly changes the drawing format, `editor/sdj.js` and the validator copy used by the e2e test need to follow.
 
 ## Development
 
 ```
 pnpm install
-pnpm check        # eslint, tsc over jsconfig.json, node --test
-pnpm test:e2e     # playwright, see below
-pnpm shots        # regenerate docs/ images: playwright, Pillow, ffmpeg, Slowly css in unsynced/slowly/css/
+pnpm check        # eslint, tsc, node --test
+pnpm test:e2e     # playwright
+pnpm shots        # regenerate docs/ images: playwright, Pillow, ffmpeg
 ```
 
-`tests/sdj.test.js` pins the format limits and `tests/friends.test.js` pins the friend hashes. The e2e (`tests/test.py`) drives the editor in headless Chromium and checks every export against Slowly's own validator, which is not in the repo: put the `Wz` function from their `main.*.js` into `unsynced/test/wz.js`. For the `slowly` variant, also copy their `main.css` to `unsynced/slowly/css/`. Needs Python with `playwright` and its Chromium.
+The e2e (`tests/test.py`) drives the editor in headless Chromium and checks every export against Slowly's own validator, which is not in the repo: put the `Wz` function from their `main.*.js` into `unsynced/test/wz.js`. For the `slowly` variant and `pnpm shots`, also copy their `main.css` to `unsynced/slowly/css/`. Needs Python with `playwright` and its Chromium.
+
+## License
+
+MIT. The screenshots use `docs/art/kawaii-cat.svg`, the "kawaii cat" by amaziing.ai from freesvg.org, published there as public domain (CC0).
