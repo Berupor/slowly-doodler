@@ -15,6 +15,8 @@ GIF_HEIGHT = 640
 FLOW_WIDTH = 900
 REPLAY_FRAMES = 70
 PHOTO_SLIDERS = {'photoDetail': '90', 'photoMin': '4'}
+POP_BUTTONS = {'popGallery': '#galleryBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
+               'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]'}
 BUILDING_STROKES = ['#8e24aa', '#1e88e5', '#0abab5', '#f06292', '#e53935']
 BASELINE = 720
 WINDOW = (14, 18)
@@ -138,22 +140,33 @@ def run():
         def stage():
             return ed.locator('.stage').bounding_box()
 
-        def save(name):
-            ed.locator('[data-tab=library]').click()
-            ed.locator('#libName').fill(name)
-            ed.locator('#libSave').click()
-            page.wait_for_timeout(300)
+        def close_pops():
+            ed.locator('body').evaluate('() => document.querySelectorAll(":popover-open").forEach(p => p.hidePopover())')
 
-        def import_tab():
-            ed.locator('[data-tab=draw]').click()
-            ed.locator('#clear').click()
-            ed.locator('[data-tab=import]').click()
+        def ui(sel):
+            pop, tab = ed.locator('body').evaluate('(_, s) => { const el = document.querySelector(s); return [el.closest("[popover]")?.id ?? null, el.closest("[data-panel]")?.dataset.panel ?? null]; }', sel)
+            if pop and ed.locator(f'#{pop}:popover-open').count() == 0:
+                close_pops()
+                button = ed.locator(POP_BUTTONS[pop])
+                if button.get_attribute('aria-pressed') == 'false': button.click()
+                button.click()
+            if tab: ed.locator(f'[data-tab={tab}]').click()
+            return ed.locator(sel)
+
+        def act(sel, method='click', *args, **kw):
+            getattr(ui(sel), method)(*args, **kw)
+            close_pops()
+
+        def save(name):
+            ui('#libName').fill(name)
+            act('#libSave')
+            page.wait_for_timeout(300)
 
         def kaleido():
             board = ed.locator('#board').bounding_box()
             cx, cy, unit = board['x'] + board['width'] / 2, board['y'] + board['height'] / 2, board['width'] / 720
-            ed.locator('#symmetry').select_option(label='Kaleido 12')
-            ed.locator('#rainbow').check(force=True)
+            act('#symmetry', 'select_option', label='Kaleido 12')
+            act('#rainbow', 'check', force=True)
             clip = stage()
             shot('kaleido', clip)
             for i in range(PETALS):
@@ -176,8 +189,7 @@ def run():
             page.wait_for_timeout(200)
 
         def replay():
-            ed.locator('[data-tab=draw]').click()
-            ed.locator('#replaySpeed').select_option('1')
+            act('#replaySpeed', 'select_option', '1')
             sdj = json.loads(ed.locator('#out').input_value())['sdj']
             step = round(end_time(sdj) / REPLAY_FRAMES)
             clip = stage()
@@ -203,30 +215,29 @@ def run():
         page.screenshot(path=str(DOCS / 'remix.png'))
         replay()
 
-        import_tab()
+        act('#clear')
         source = work / 'city.png'
         source.write_bytes(base64.b64decode(page.evaluate(RASTERIZE_JS, city(True))))
-        ed.locator('#photoFile').set_input_files(str(source))
+        ui('#photoFile').set_input_files(str(source))
         ed.locator('#photoColors').check(force=True)
         for id, value in PHOTO_SLIDERS.items():
             ed.locator(f'#{id}').evaluate('(e, v) => { e.value = v; e.dispatchEvent(new Event("input")); }', value)
         page.wait_for_timeout(2500)
+        close_pops()
         before_after(source, ed.locator('#board').screenshot(), DOCS / 'photo.png')
         save('City image')
 
-        import_tab()
-        ed.locator('#text').fill('Hello from far away, dear friend!')
-        ed.locator('#writeText').click()
+        act('#clear')
+        ui('#text').fill('Hello from far away, dear friend!')
+        act('#writeText')
         page.wait_for_timeout(800)
         save('Letter')
 
-        ed.locator('[data-tab=draw]').click()
-        ed.locator('#clear').click()
+        act('#clear')
         kaleido()
-        ed.locator('#rainbow').uncheck(force=True)
-        ed.locator('#symmetry').select_option('off')
+        act('#rainbow', 'uncheck', force=True)
+        act('#symmetry', 'select_option', 'off')
         save('Kaleido')
-        ed.locator('[data-tab=draw]').click()
         hold('flow', 3)
 
         ed.locator('#send').click()
@@ -241,7 +252,7 @@ def run():
         page.evaluate('document.documentElement.classList.add("theme-dark")')
         page.locator('.composer-actions .icon-drawing').click()
         page.wait_for_timeout(1200)
-        ed.locator('[data-tab=library]').click()
+        ed.locator('#galleryBtn').click()
         page.wait_for_timeout(300)
         page.screenshot(path=str(DOCS / 'library.png'))
         ctx.close()

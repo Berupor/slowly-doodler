@@ -31,15 +31,15 @@ No store listing. `chrome://extensions`, Developer mode, Load unpacked, pick `ex
 
 - Esc closes Doodler without sending.
 
-Tabs on the right: Draw (symmetry, rainbow, reference image, replay), Import (SVG, photo, text), Library (saved drawings), JSON (the raw sdj, copy or load). Keys: B pen, L line, O ellipse, E eraser, `[` `]` weight.
+The top bar holds Gallery (saved drawings), Actions (add SVG, photo or text, reference image, Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools and colour on the right. Tap the active tool again for its options. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight.
 
 By hand, with Kaleido 12 symmetry and rainbow:
 
 ![Kaleido 12 symmetry with rainbow strokes](docs/draw.gif)
 
-Library in the dark theme:
+Gallery in the dark theme:
 
-![Library tab in the dark theme](docs/library.png)
+![Gallery in the dark theme](docs/library.png)
 
 Weights other than 1, 3, 6 and colors outside the 12 base ones are marked "experimental": they pass Slowly's validation but have not been checked in the mobile apps.
 
@@ -53,7 +53,7 @@ The editor runs in an iframe from the extension, with Slowly's stylesheets passe
 
 ## What breaks
 
-The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When a selector the extension expects is missing, it logs `doodler_selector_missing` and shows a toast once per session. The JSON tab still gives you the sdj to copy.
+The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When a selector the extension expects is missing, it logs `doodler_selector_missing` and shows a toast once per session. Actions > Share still gives you the sdj to copy.
 
 If Slowly changes the drawing format, `editor/sdj.js` and the validator copy used by the e2e test need to follow.
 
