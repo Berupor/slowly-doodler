@@ -19,8 +19,16 @@ const SLOWLY_FONT_CSS = 'https://fonts.googleapis.com/css?family=Open+Sans:400,6
 const SLOWLY_FONTS = ['400 14px "Open Sans"', '600 14px "Open Sans"', '20px slowly-icomoon'];
 const STYLE_WAIT_MS = 2500;
 
-const $ = id => document.getElementById(id);
-const board = $('board'), ink = $('ink'), live = $('live'), ref = $('ref');
+/** @param {string} id */
+const $ = id => /** @type {HTMLInputElement} */ (document.getElementById(id));
+/** @param {string} id */
+const $g = id => /** @type {SVGGElement} */ (document.querySelector(`#${id}`));
+const board = /** @type {SVGSVGElement} */ (document.querySelector('#board'));
+const ink = $g('ink'), live = $g('live'), ref = $g('ref');
+const progressBar = /** @type {HTMLProgressElement} */ (document.getElementById('progress'));
+const friendSelect = /** @type {HTMLSelectElement} */ (document.getElementById('friend'));
+/** @type {WeakMap<Element, S.Stroke>} */
+const strokeOf = new WeakMap();
 const embedded = window.parent !== window;
 const params = new URLSearchParams(location.search);
 const isDark = () => document.documentElement.classList.contains('theme-dark');
@@ -41,23 +49,51 @@ Promise.race([loadSlowlyStyles(), new Promise(r => setTimeout(r, STYLE_WAIT_MS))
   .then(() => document.documentElement.classList.add('styled'));
 $('dark').checked = isDark();
 
+/**
+ * @typedef {{ strokes: S.Stroke[], palette: S.Palette }} Snapshot
+ * @typedef {{ tool: string, color: string, weight: number, startOffset: number, t0: number,
+ *   a: [number, number], b: [number, number], dur: number, points: S.Point[] }} Gesture
+ */
+
+/** @type {S.Stroke[]} */
 let strokes = [];
+/** @type {S.Palette} */
 let palette = {};
+/** @type {string[]} */
 let customColors = [];
-let tool = 'pen', color = 'black', weight = 3, symmetry = 'off', rainbow = false;
-let undoStack = [], redoStack = [];
-let gesture = null, erasing = null;
-let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false, refDrag = null;
+let tool = 'pen', color = 'black', weight = 3, rainbow = false;
+let symmetry = 'off';
+/** @type {Snapshot[]} */
+let undoStack = [];
+/** @type {Snapshot[]} */
+let redoStack = [];
+/** @type {Gesture | null} */
+let gesture = null;
+/** @type {Set<S.Stroke> | null} */
+let erasing = null;
+let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
+/** @type {{ px: number, py: number, x: number, y: number } | null} */
+let refDrag = null;
+/** @type {number | null} */
 let sessionStart = null;
+/** @type {number | null} */
 let replay = null;
+/** @type {{ key: string, before: S.Stroke[] } | null} */
 let lastImport = null;
 
 const cx = W / 2, cy = H / 2;
+/** @typedef {(p: number[]) => [number, number]} Transform */
+/** @type {(a: number) => Transform} */
 const rot = a => ([x, y]) => [cx + (x - cx) * Math.cos(a) - (y - cy) * Math.sin(a), cy + (x - cx) * Math.sin(a) + (y - cy) * Math.cos(a)];
+/** @type {Transform} */
 const flipX = ([x, y]) => [2 * cx - x, y];
+/** @type {Transform} */
 const flipY = ([x, y]) => [x, 2 * cy - y];
-const same = p => p;
+/** @type {Transform} */
+const same = ([x, y]) => [x, y];
+/** @param {number} n */
 const turns = n => Array.from({ length: n }, (_, i) => rot(i * 2 * Math.PI / n));
+/** @type {Record<string, { label: string, t: Transform[] }>} */
 const SYMMETRY = {
   off: { label: 'Off', t: [same] },
   mirror: { label: 'Mirror', t: [same, flipX] },
@@ -71,14 +107,17 @@ const TOOLS = {
   ellipse: () => icon('circle-o', '◯'),
   eraser: () => icon('eraser', '⌫'),
 };
+/** @type {Record<string, string>} */
 const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser' };
 
+/** @param {string} text */
 function say(text, error = false) {
   const el = $('status');
   el.textContent = text;
   el.classList.toggle('error', error);
 }
 
+/** @param {S.Stroke[]} next */
 function commit(next, { keepClock = false, keepImport = false } = {}) {
   undoStack.push({ strokes, palette });
   if (undoStack.length > HISTORY_DEPTH) undoStack.shift();
@@ -89,6 +128,7 @@ function commit(next, { keepClock = false, keepImport = false } = {}) {
   changed();
 }
 
+/** @param {Snapshot[]} from @param {Snapshot[]} to */
 function restore(from, to) {
   const snap = from.pop();
   if (!snap) return;
@@ -99,7 +139,8 @@ function restore(from, to) {
   changed();
 }
 
-let workingTimer = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let workingTimer;
 function changed() {
   renderInk();
   updateStats();
@@ -108,12 +149,13 @@ function changed() {
   workingTimer = setTimeout(() => lib.saveWorking({ sdj: S.buildSdj(strokes, palette), customColors }), 400);
 }
 
+/** @param {number[][]} points @param {string} token @param {number} w */
 function pathEl(points, token, w) {
   const el = document.createElementNS(NS, 'path');
   const entry = S.entryFor(token, palette);
   el.setAttribute('d', points.length ? S.pathD(points) : '');
   el.setAttribute('stroke', isDark() ? entry.dark : entry.light);
-  el.setAttribute('stroke-width', S.STROKE_SCALE * w);
+  el.setAttribute('stroke-width', String(S.STROKE_SCALE * w));
   el.setAttribute('fill', 'none');
   el.setAttribute('stroke-linecap', 'round');
   el.setAttribute('stroke-linejoin', 'round');
@@ -123,11 +165,12 @@ function pathEl(points, token, w) {
 function renderInk() {
   ink.replaceChildren(...strokes.map(s => {
     const el = pathEl(s.points, s.color, s.weight);
-    el.__stroke = s;
+    strokeOf.set(el, s);
     return el;
   }));
 }
 
+/** @param {Gesture} g @returns {S.Point[]} */
 function gesturePoints(g) {
   if (g.tool === 'pen') return g.points;
   if (g.tool === 'line') return [[...g.a, 0], [...g.b, g.dur]];
@@ -139,16 +182,20 @@ function gesturePoints(g) {
   });
 }
 
+/** @type {(p: S.Point) => S.Point} */
 const clampPoint = ([x, y, t]) => [S.r2(Math.min(W, Math.max(0, x))), S.r2(Math.min(H, Math.max(0, y))), Math.round(t)];
 
-function renderLive() {
-  const pts = gesturePoints(gesture);
-  const shown = rainbow ? RAINBOW[0] : gesture.color;
+/** @param {Gesture} g */
+function renderLive(g) {
+  const pts = gesturePoints(g);
+  const shown = rainbow ? RAINBOW[0] : g.color;
   live.replaceChildren(...SYMMETRY[symmetry].t.map(tf =>
-    pathEl(pts.map(p => [...tf(p), p[2]]), shown, gesture.weight)));
+    pathEl(pts.map(p => [...tf(p), p[2]]), shown, g.weight)));
 }
 
+/** @param {S.Stroke} stroke @param {number} phase */
 function splitRainbow(stroke, phase) {
+  /** @type {S.Stroke[]} */
   const out = [];
   for (let i = 0, n = phase; ; i += RAINBOW_CHUNK - 1, n++) {
     const chunk = stroke.points.slice(i, i + RAINBOW_CHUNK);
@@ -160,8 +207,8 @@ function splitRainbow(stroke, phase) {
   return out;
 }
 
-function finishGesture() {
-  const g = gesture;
+/** @param {Gesture} g */
+function finishGesture(g) {
   gesture = null;
   live.replaceChildren();
   const base = gesturePoints(g);
@@ -173,22 +220,26 @@ function finishGesture() {
   commit([...strokes, ...added], { keepClock: true });
 }
 
+/** @param {PointerEvent} e */
 function boardPoint(e) {
   const pt = board.createSVGPoint();
   pt.x = e.clientX; pt.y = e.clientY;
-  return pt.matrixTransform(board.getScreenCTM().inverse());
+  return pt.matrixTransform(board.getScreenCTM()?.inverse());
 }
 
+/** @param {PointerEvent} e @returns {[number, number]} */
 function toCanvas(e) {
   const p = boardPoint(e);
   return [S.r2(Math.min(W, Math.max(0, p.x))), S.r2(Math.min(H, Math.max(0, p.y)))];
 }
 
-function eraseAt(e) {
+/** @param {PointerEvent} e @param {Set<S.Stroke>} erased */
+function eraseAt(e, erased) {
   for (const [dx, dy] of ERASER_PROBE) {
     const el = document.elementFromPoint(e.clientX + dx, e.clientY + dy);
-    if (el?.__stroke && !erasing.has(el.__stroke)) {
-      erasing.add(el.__stroke);
+    const stroke = el && strokeOf.get(el);
+    if (stroke && el instanceof SVGElement && !erased.has(stroke)) {
+      erased.add(stroke);
       el.style.display = 'none';
     }
   }
@@ -205,14 +256,14 @@ board.addEventListener('pointerdown', e => {
   }
   if (tool === 'eraser') {
     erasing = new Set();
-    eraseAt(e);
+    eraseAt(e, erasing);
     return;
   }
   const now = Date.now();
-  if (sessionStart === null) sessionStart = now - S.endTime(strokes) - (strokes.length ? STROKE_GAP_MS : 0);
+  sessionStart ??= now - S.endTime(strokes) - (strokes.length ? STROKE_GAP_MS : 0);
   const p = toCanvas(e);
   gesture = { tool, color, weight, startOffset: now - sessionStart, t0: e.timeStamp, a: p, b: p, dur: 0, points: [[...p, 0]] };
-  renderLive();
+  renderLive(gesture);
 });
 
 board.addEventListener('pointermove', e => {
@@ -224,7 +275,7 @@ board.addEventListener('pointermove', e => {
     return;
   }
   if (erasing) {
-    for (const ev of e.getCoalescedEvents?.() ?? [e]) eraseAt(ev);
+    for (const ev of e.getCoalescedEvents?.() ?? [e]) eraseAt(ev, erasing);
     return;
   }
   if (!gesture) return;
@@ -239,7 +290,7 @@ board.addEventListener('pointermove', e => {
       gesture.dur = Math.max(MIN_SHAPE_MS, t);
     }
   }
-  renderLive();
+  renderLive(gesture);
 });
 
 const endPointer = () => {
@@ -248,7 +299,7 @@ const endPointer = () => {
     const gone = erasing;
     erasing = null;
     if (gone.size) commit(strokes.filter(s => !gone.has(s)));
-  } else if (gesture) finishGesture();
+  } else if (gesture) finishGesture(gesture);
 };
 board.addEventListener('pointerup', endPointer);
 board.addEventListener('pointercancel', endPointer);
@@ -259,7 +310,7 @@ function pillButtons(id, cls, items) {
     b.append(content);
     b.title = title || '';
     b.className = cls;
-    b.setAttribute('aria-pressed', !!on);
+    b.setAttribute('aria-pressed', String(!!on));
     b.onclick = () => { pick(); buildBars(); };
     return b;
   }));
@@ -284,25 +335,40 @@ function buildBars() {
   pillButtons('tools', 'drawing-tool-circle', Object.entries(TOOLS).map(([t, content]) => ({
     content: content(), title: t, on: tool === t, pick: () => tool = t,
   })));
-  const sizes = S.SIZES.includes(weight) ? S.SIZES : [...S.SIZES, weight].sort((a, b) => a - b);
-  pillButtons('sizes', 'drawing-tool-circle', sizes.map(w => ({
-    content: span('drawing-weight-dot', { width: 2 + 2 * w + 'px', height: 2 + 2 * w + 'px' }),
-    title: S.SIZES.includes(w) ? `weight ${w}` : `weight ${w}, experimental`, on: weight === w, pick: () => setWeight(w),
-  })));
   const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
   pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
     content: span('drawing-color-swatch', { background: S.entryFor(t, palette)[isDark() ? 'dark' : 'light'] }),
     title: t, on: color === t && tool !== 'eraser', pick: () => { color = t; if (tool === 'eraser') tool = 'pen'; },
   })));
   board.classList.toggle('erasing', tool === 'eraser');
-  $('weight').value = weight;
-  $('weightOut').textContent = weight;
+  showWeight();
+}
+
+const sizeRail = /** @type {HTMLElement} */ (document.querySelector('.size-rail'));
+const railFraction = w => String((w - S.LIMITS.minWeight) / (S.LIMITS.maxWeight - S.LIMITS.minWeight));
+sizeRail.prepend(...S.SIZES.map(w => {
+  const stop = span('size-stop');
+  stop.style.setProperty('--f', railFraction(w));
+  return stop;
+}));
+sizeRail.onpointerenter = showWeight;
+let railFlash = 0;
+
+function showWeight() {
+  $('weight').value = String(weight);
+  $('weightOut').textContent = String(weight);
+  sizeRail.style.setProperty('--f', railFraction(weight));
+  const d = Math.max(2, S.STROKE_SCALE * weight * board.clientWidth / W) + 'px';
+  Object.assign($('weightDot').style, { width: d, height: d, background: S.entryFor(color, palette)[isDark() ? 'dark' : 'light'] });
 }
 
 function setWeight(w) {
   weight = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
   if (tool === 'eraser') tool = 'pen';
   buildBars();
+  sizeRail.classList.add('showing');
+  clearTimeout(railFlash);
+  railFlash = setTimeout(() => sizeRail.classList.remove('showing'), 800);
 }
 
 function updateStats() {
@@ -339,8 +405,9 @@ function useSdj(sdj, { append = false } = {}) {
   buildBars();
 }
 
+/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} [extraPalette] */
 function applyImport(key, polylines, extraPalette = {}) {
-  const base = lastImport?.key === key ? lastImport.before : strokes;
+  const base = lastImport && lastImport.key === key ? lastImport.before : strokes;
   const start = base.length ? S.endTime(base) + STROKE_GAP_MS : 0;
   const added = S.timed(polylines, start);
   palette = { ...palette, ...extraPalette };
@@ -360,24 +427,28 @@ function applyImport(key, polylines, extraPalette = {}) {
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r)));
 
 let busyRun = 0;
+/**
+ * @param {string} label
+ * @param {(onProgress: (fraction: number) => void, current: () => boolean) => Promise<void>} work
+ */
 async function busy(label, work) {
   const run = ++busyRun;
-  const bar = $('progress');
   document.body.classList.add('busy');
-  bar.hidden = false;
-  bar.removeAttribute('value');
+  progressBar.hidden = false;
+  progressBar.removeAttribute('value');
   say(label + '...');
   await nextPaint();
   try {
-    await work(fraction => { bar.value = fraction; }, () => run === busyRun);
+    await work(fraction => { progressBar.value = fraction; }, () => run === busyRun);
   } finally {
     if (run === busyRun) {
       document.body.classList.remove('busy');
-      bar.hidden = true;
+      progressBar.hidden = true;
     }
   }
 }
 
+/** @type {{ text: string, remix: boolean } | null} */
 let svgSource = null;
 function runSvg(key = 'svg') {
   if (!svgSource) return;
@@ -389,59 +460,70 @@ function runSvg(key = 'svg') {
       if (!current()) return;
       applyImport(key, polylines, extra);
       if (dropped) say(`${$('status').textContent}, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes`);
-    } catch (err) { say('svg import failed: ' + err.message, true); }
+    } catch (err) { say('svg import failed: ' + errorText(err), true); }
   });
 }
 
+/** @param {unknown} err */
+const errorText = err => err instanceof Error ? err.message : String(err);
+
+/** @type {{ bitmap: ImageBitmap, key: string } | null} */
 let photoSource = null;
 function runPhoto() {
   if (!photoSource) return;
+  const source = photoSource;
   return busy('tracing', async () => {
-    applyImport(photoSource.key, photoToPolylines(photoSource.bitmap, {
+    applyImport(source.key, photoToPolylines(source.bitmap, {
       mode: $('photoMode').value, detail: Number($('photoDetail').value), minLength: Number($('photoMin').value),
       color, weight, photoColors: $('photoColors').checked,
     }));
   });
 }
 
+/** @type {string | null} */
 let textKey = null;
 function runText() {
   const text = $('text').value.trim();
   if (!text) return say('type some text first', true);
-  textKey ??= 'text:' + Date.now();
+  const key = textKey ??= 'text:' + Date.now();
   return busy('writing', async () => {
-    applyImport(textKey, textToPolylines(text, {
+    applyImport(key, textToPolylines(text, {
       font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight,
     }));
   });
 }
 
+/** @param {{ friends: DoodlerFriend[], current: number | null }} data */
 function setFriends({ friends, current }) {
-  $('friend').append(...friends.map(f => {
+  friendSelect.append(...friends.map(f => {
     const o = document.createElement('option');
-    o.value = f.userId;
+    o.value = String(f.userId);
     o.textContent = f.country ? `${f.name} (${f.country.toUpperCase()})` : f.name;
     return o;
   }));
-  if (current) $('target').value = current;
+  if (current) $('target').value = String(current);
   syncFriend();
   writeJson();
 }
 
 function syncFriend() {
-  const match = [...$('friend').options].find(o => o.value && o.value === $('target').value);
-  $('friend').value = match ? match.value : '';
+  const match = [...friendSelect.options].find(o => o.value && o.value === $('target').value);
+  friendSelect.value = match ? match.value : '';
 }
 
+/** @param {() => void} fn */
 function debounce(fn, ms = 160) {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
   let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  return () => { clearTimeout(t); t = setTimeout(fn, ms); };
 }
 
+/** @param {string} prefix @param {() => void} fn */
 function rerunIf(prefix, fn) {
   return debounce(() => { if (lastImport?.key?.startsWith(prefix)) fn(); });
 }
 
+/** @param {S.Stroke[]} list */
 function compressedStarts(list) {
   const order = list.map((s, i) => i).sort((a, b) => list[a].startOffset - list[b].startOffset);
   const starts = new Array(list.length);
@@ -488,6 +570,7 @@ function stopReplay() {
   renderInk();
 }
 
+/** @param {S.Sdj} sdj */
 function thumbnail(sdj) {
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${sdj.canvas.width} ${sdj.canvas.height}`);
@@ -497,7 +580,7 @@ function thumbnail(sdj) {
     const entry = sdj.palette[s.color] || S.entryFor(s.color, {});
     el.setAttribute('d', S.pathD(s.points));
     el.setAttribute('stroke', dark ? entry.dark : entry.light);
-    el.setAttribute('stroke-width', S.STROKE_SCALE * s.weight);
+    el.setAttribute('stroke-width', String(S.STROKE_SCALE * s.weight));
     el.setAttribute('fill', 'none');
     el.setAttribute('stroke-linecap', 'round');
     el.setAttribute('stroke-linejoin', 'round');
@@ -546,7 +629,7 @@ $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
   buildBars();
   renderInk();
-  if (!document.querySelector('[data-panel=library]').hidden) lib.listDrawings().then(renderLibrary);
+  if (!/** @type {HTMLElement} */ (document.querySelector('[data-panel=library]')).hidden) lib.listDrawings().then(renderLibrary);
 };
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
@@ -562,22 +645,22 @@ $('addColor').onclick = () => {
   buildBars();
 };
 
-$('refFile').onchange = e => {
-  const f = e.target.files[0];
+$('refFile').onchange = () => {
+  const f = $('refFile').files?.[0];
   if (!f) return;
   const img = document.createElementNS(NS, 'image');
   img.setAttribute('href', URL.createObjectURL(f));
-  img.setAttribute('width', W);
-  img.setAttribute('height', H);
+  img.setAttribute('width', String(W));
+  img.setAttribute('height', String(H));
   img.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   img.setAttribute('opacity', $('refOpacity').value);
   img.style.pointerEvents = 'none';
   ref.replaceChildren(img);
   resetRef();
-  e.target.value = '';
+  $('refFile').value = '';
 };
 $('refOpacity').oninput = () => {
-  ref.firstChild?.setAttribute('opacity', $('refOpacity').value);
+  ref.firstElementChild?.setAttribute('opacity', $('refOpacity').value);
   $('refOpacityOut').textContent = Math.round(Number($('refOpacity').value) * 100) + '%';
 };
 $('refClear').onclick = () => { ref.replaceChildren(); setRefMove(false); };
@@ -585,15 +668,17 @@ $('refClear').onclick = () => { ref.replaceChildren(); setRefMove(false); };
 function applyRef() {
   const { x, y, rot, flip, scale } = refPose;
   ref.setAttribute('transform', `translate(${x} ${y}) translate(${W / 2} ${H / 2}) rotate(${rot}) scale(${flip * scale} ${scale}) translate(${-W / 2} ${-H / 2})`);
+  $('refScaleOut').textContent = scale + '×';
 }
 function resetRef() {
   refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 };
-  $('refScale').value = 1;
+  $('refScale').value = '1';
   applyRef();
 }
+/** @param {boolean} on */
 function setRefMove(on) {
   refMove = on && !!ref.firstChild;
-  $('refMove').setAttribute('aria-pressed', refMove);
+  $('refMove').setAttribute('aria-pressed', String(refMove));
   board.classList.toggle('moving', refMove);
 }
 $('refMove').onclick = () => setRefMove(!refMove);
@@ -602,23 +687,23 @@ $('refFlip').onclick = () => { refPose.flip = -refPose.flip; applyRef(); };
 $('refScale').oninput = () => { refPose.scale = Number($('refScale').value); applyRef(); };
 $('refReset').onclick = resetRef;
 
-$('svgFile').onchange = async e => {
-  const f = e.target.files[0];
+$('svgFile').onchange = async () => {
+  const f = $('svgFile').files?.[0];
   if (!f) return;
   svgSource = { text: await f.text(), remix: false };
   lastImport = null;
   runSvg('svg:' + Date.now());
-  e.target.value = '';
+  $('svgFile').value = '';
 };
-const rerunSvg = rerunIf('svg', () => runSvg(lastImport.key));
+const rerunSvg = rerunIf('svg', () => lastImport && runSvg(lastImport.key));
 $('svgFills').onchange = rerunSvg;
 $('svgColors').onchange = rerunSvg;
 
-$('photoFile').onchange = async e => {
-  const f = e.target.files[0];
+$('photoFile').onchange = async () => {
+  const f = $('photoFile').files?.[0];
   if (!f) return;
   photoSource = { bitmap: await createImageBitmap(f), key: 'photo:' + Date.now() };
-  e.target.value = '';
+  $('photoFile').value = '';
   runPhoto();
 };
 const rerunPhoto = rerunIf('photo', runPhoto);
@@ -636,7 +721,6 @@ $('libSave').onclick = async () => {
   renderLibrary(await lib.saveDrawing(name, S.buildSdj(strokes, palette)));
   $('libName').value = '';
   say(`saved "${name}"`);
-  $('refScaleOut').textContent = scale + '×';
 };
 
 $('copy').onclick = async () => {
@@ -651,23 +735,24 @@ $('load').onclick = () => {
     if (j.render !== undefined) $('render').checked = j.render;
     useSdj(j.sdj || j);
     say(`loaded ${strokes.length} strokes`);
-  } catch (err) { say('bad json: ' + err.message, true); }
+  } catch (err) { say('bad json: ' + errorText(err), true); }
 };
 $('target').oninput = () => { syncFriend(); writeJson(); };
 $('friend').onchange = () => { if ($('friend').value) $('target').value = $('friend').value; writeJson(); };
 $('render').onchange = writeJson;
 
 $('tabs').onclick = e => {
-  const tab = e.target.closest('[data-tab]')?.dataset.tab;
+  if (!(e.target instanceof Element)) return;
+  const tab = /** @type {HTMLElement | null} */ (e.target.closest('[data-tab]'))?.dataset.tab;
   if (!tab) return;
   e.preventDefault();
-  for (const a of $('tabs').querySelectorAll('[data-tab]')) a.classList.toggle('active', a.dataset.tab === tab);
-  for (const p of document.querySelectorAll('.panel')) p.hidden = p.dataset.panel !== tab;
+  for (const a of $('tabs').querySelectorAll('[data-tab]')) a.classList.toggle('active', a.getAttribute('data-tab') === tab);
+  for (const p of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.panel'))) p.hidden = p.dataset.panel !== tab;
   if (tab === 'library') lib.listDrawings().then(renderLibrary);
 };
 
 document.addEventListener('keydown', e => {
-  if (e.target.closest('input,textarea,select')) return;
+  if (e.target instanceof Element && e.target.closest('input,textarea,select')) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
     e.preventDefault();
