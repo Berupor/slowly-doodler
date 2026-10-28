@@ -16,6 +16,9 @@ const FLOW_DOG_SIGMA = 3;
 const INHIBIT_SIGMA = 12;
 const INHIBIT_ALPHA = 3;
 const LOCAL_SIGMA = 6;
+const SOLID_LEVEL = 64;
+const SOLID_GAP = 1;
+const SOLID_RADIUS = 4;
 const LOCAL_THRESHOLDS = [70, 20];
 const WEAK_RATIO = 0.45;
 const WEAK_STROKE_FACTOR = 1.5;
@@ -393,7 +396,20 @@ function darkStrokes(g, w, h, detail) {
   const fine = gaussian(g, w, h, 1), local = gaussian(g, w, h, LOCAL_SIGMA);
   const strength = new Float32Array(w * h);
   for (let i = 0; i < strength.length; i++) strength[i] = Math.max(0, local[i] - fine[i]);
-  return { strength, high: byDetail(LOCAL_THRESHOLDS, detail) };
+  const high = byDetail(LOCAL_THRESHOLDS, detail), mass = solidInk(fine, w, h), core = erode(mass, w, h, 1);
+  for (let i = 0; i < strength.length; i++) if (mass[i]) strength[i] = core[i] ? 0 : high;
+  return { strength, high };
+}
+
+const erode = (/** @type {Uint8Array} */ mask, /** @type {number} */ w, /** @type {number} */ h, /** @type {number} */ r) =>
+  dilate(mask.map(v => 1 - v), w, h, r).map(v => 1 - v);
+
+// The local threshold marks a band a few pixels inside the edge of a filled area, which thins into a second contour;
+// ink wider than a pen line is a mass and is drawn by its edge
+function solidInk(g, w, h) {
+  const ink = Uint8Array.from(g, v => v < SOLID_LEVEL ? 1 : 0);
+  const closed = erode(dilate(ink, w, h, SOLID_GAP), w, h, SOLID_GAP);
+  return dilate(erode(closed, w, h, SOLID_RADIUS), w, h, SOLID_RADIUS);
 }
 
 const DETECTORS = { edges: cannyEdges, sketch: flowDog, dark: darkStrokes };
@@ -688,13 +704,23 @@ function linkStrokes(lines, w, h) {
 }
 
 function dilate(mask, w, h, r) {
-  const out = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      if (!mask[y * w + x]) continue;
-      for (let ny = Math.max(0, y - r); ny <= Math.min(h - 1, y + r); ny++) out.fill(1, ny * w + Math.max(0, x - r), ny * w + Math.min(w - 1, x + r) + 1);
+  const spread = (/** @type {Uint8Array} */ src, /** @type {number} */ lines, /** @type {number} */ len, /** @type {number} */ step, /** @type {number} */ stride) => {
+    const out = new Uint8Array(w * h);
+    for (let l = 0; l < lines; l++) {
+      let next = Infinity;
+      for (let k = len - 1; k >= 0; k--) {
+        if (src[l * stride + k * step]) next = k;
+        out[l * stride + k * step] = next - k <= r ? 1 : 0;
+      }
+      let last = -Infinity;
+      for (let k = 0; k < len; k++) {
+        if (src[l * stride + k * step]) last = k;
+        if (k - last <= r) out[l * stride + k * step] = 1;
+      }
     }
-  return out;
+    return out;
+  };
+  return spread(spread(mask, h, w, 1, w), w, h, w, 1);
 }
 
 function straightLength(pts) {

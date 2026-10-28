@@ -210,6 +210,28 @@ describe('texture inhibition', () => {
   });
 });
 
+describe('photo flat colour', () => {
+  const PAPER = [242, 239, 230];
+  const disc = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 150, y - 160) < 80;
+  const box = (/** @type {number} */ x, /** @type {number} */ y) => x > 330 && x < 520 && y > 90 && y < 230;
+  const scene = (/** @type {number} */ x, /** @type {number} */ y) => disc(x, y) ? [43, 43, 43] : box(x, y) ? [47, 109, 181] : PAPER;
+
+  for (const [name, preset] of Object.entries(PRESETS))
+    it(`outlines a solid disc and a solid box once with nothing inside, ${name}`, () => {
+      const crop = placementCrop(600, 320);
+      assert.ok(crop);
+      const lines = traceCrop(paint(crop, scene), crop, { ...preset, color: 'black', weight: 1 }).map(l => l.pts.map(p => toSource(crop, p)));
+      const near = (/** @type {(x: number, y: number) => boolean} */ inside) => lines.filter(pts => pts.some(([x, y]) => inside(x, y) || [[-4, 0], [4, 0], [0, -4], [0, 4]].some(([dx, dy]) => inside(x + dx, y + dy))));
+      for (const [shape, inside, rim] of /** @type {const} */ ([['disc', disc, 2 * Math.PI * 80], ['box', box, 2 * (190 + 140)]])) {
+        const on = near(inside);
+        assert.equal(on.length, 1, `${on.length} strokes on the ${shape}`);
+        assert.ok(length(on[0]) > 0.9 * rim, `${shape}: ${Math.round(length(on[0]))} of ${Math.round(rim)}`);
+        const deep = (/** @type {number} */ x, /** @type {number} */ y) => [[-8, 0], [8, 0], [0, -8], [0, 8]].every(([dx, dy]) => inside(x + dx, y + dy));
+        assert.ok(!on[0].some(([x, y]) => deep(x, y)), `a stroke runs inside the ${shape}`);
+      }
+    });
+});
+
 describe('clipToCanvas', () => {
   it('splits a line that leaves and re-enters the canvas at the crossings', () => {
     const pieces = clipToCanvas([[100, 100], [-100, 100], [-100, 200], [100, 200]]);
