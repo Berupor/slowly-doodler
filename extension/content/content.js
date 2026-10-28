@@ -4,23 +4,50 @@
   const SAVE_TIMEOUT_MS = 20000;
   const pageUrl = chrome.runtime.getURL('editor/index.html');
   const origin = new URL(pageUrl).origin;
-  let overlay = null, frame = null, ready = false, queued = [], nativeClick = false;
+  // web.slowly.app main.*.js markup; when their bundle changes, these are the strings to update
+  const SLOWLY = {
+    opener: 'button.btn-toolbar i.icon-drawing',
+    replyPill: 'button.rounded-pill i.icon-pencil',
+    thumbnail: '.drawing-thumbnail-preview',
+    thumbnailImage: '.drawing-thumbnail-preview img',
+    thumbnailEdit: '.drawing-thumbnail-edit',
+    editor: '.drawing-dialog',
+    editorDone: '.drawing-dialog .drawing-done',
+    editorWarning: '.drawing-dialog .alert-warning',
+    restoreConfirm: '.modal-footer .btn-primary',
+    stylesheetPath: '/static/css/',
+  };
+  /** @type {HTMLDivElement | null} */
+  let overlay = null;
+  /** @type {HTMLIFrameElement | null} */
+  let frame = null;
+  /** @type {object[]} */
+  let queued = [];
+  let ready = false, nativeClick = false;
 
+  /** @template {HTMLElement} T @param {T} el @param {string} text */
   const css = (el, text) => { el.style.cssText = text; return el; };
   const isDark = () => document.documentElement.classList.contains('theme-dark');
 
-  // selectors come from web.slowly.app main.*.js: composer toolbar button with i.icon-drawing, thumbnail
-  // .drawing-thumbnail-edit, Reply pill with i.icon-pencil, editor .drawing-dialog / .drawing-done, alert .modal-footer
-  const findOpener = () => document.querySelector('button.btn-toolbar i.icon-drawing')?.closest('button');
+  /** @returns {HTMLButtonElement | null} */
+  const findOpener = () => document.querySelector(SLOWLY.opener)?.closest('button') ?? null;
   const attachedSvg = () => {
-    const src = document.querySelector('.drawing-thumbnail-preview img')?.getAttribute('src');
+    const src = document.querySelector(SLOWLY.thumbnailImage)?.getAttribute('src');
     return src?.startsWith(SVG_DATA) ? decodeSvg(src) : null;
   };
 
+  class SelectorMissing extends Error {
+    /** @param {keyof typeof SLOWLY} name @param {string} message */
+    constructor(name, message) {
+      super(message);
+      this.selector = SLOWLY[name];
+    }
+  }
+
   document.addEventListener('click', e => {
-    if (nativeClick || e.shiftKey) return;
-    const opener = e.target.closest?.('button');
-    if (!opener || !(opener.matches('.drawing-thumbnail-edit') || opener === findOpener())) return;
+    if (nativeClick || e.shiftKey || !(e.target instanceof Element)) return;
+    const opener = e.target.closest('button');
+    if (!opener || !(opener.matches(SLOWLY.thumbnailEdit) || opener === findOpener())) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     open();
@@ -39,11 +66,13 @@
 
   const remix = slowlyButton('btn-sm', 'pencil', 'Remix', 'position:fixed;z-index:2147483646;display:none;font-weight:600');
   document.body.appendChild(remix);
+  /** @type {HTMLImageElement | null} */
   let remixTarget = null;
 
   document.addEventListener('mouseover', e => {
-    const img = e.target.closest?.(`img[src^="${SVG_DATA}"]`);
-    if (!img || overlay || img.closest('.drawing-thumbnail-preview')) return;
+    if (!(e.target instanceof Element)) return;
+    const img = /** @type {HTMLImageElement | null} */ (e.target.closest(`img[src^="${SVG_DATA}"]`));
+    if (!img || overlay || img.closest(SLOWLY.thumbnail)) return;
     const r = img.getBoundingClientRect();
     if (r.width < 60) return;
     remixTarget = img;
@@ -57,21 +86,23 @@
     if (!remixTarget) return;
     remix.style.display = 'none';
     open();
-    post({ type: 'doodler:import-svg', svg: decodeSvg(remixTarget.getAttribute('src')) });
+    post({ type: 'doodler:import-svg', svg: decodeSvg(remixTarget.getAttribute('src') ?? '') });
   };
 
+  /** @param {string} src */
   function decodeSvg(src) { return decodeURIComponent(src.slice(src.indexOf(',') + 1)); }
 
+  /** @param {object} msg */
   function post(msg) {
-    if (ready) frame.contentWindow.postMessage(msg, origin);
+    if (ready && frame?.contentWindow) frame.contentWindow.postMessage(msg, origin);
     else queued.push(msg);
   }
 
   function frameUrl() {
     const url = new URL(pageUrl);
     for (const link of document.querySelectorAll('link[rel=stylesheet]')) {
-      const href = new URL(link.href);
-      if (href.origin === location.origin && href.pathname.startsWith('/static/css/')) url.searchParams.append('css', href.href);
+      const href = new URL(/** @type {HTMLLinkElement} */ (link).href);
+      if (href.origin === location.origin && href.pathname.startsWith(SLOWLY.stylesheetPath)) url.searchParams.append('css', href.href);
     }
     if (isDark()) url.searchParams.set('theme', 'dark');
     return url.href;
@@ -80,17 +111,19 @@
   function open() {
     if (overlay) return;
     ready = false;
-    queued = [{ type: 'doodler:friends', ...globalThis.doodlerFriends() }];
-    overlay = css(document.createElement('div'),
+    queued = [{ type: 'doodler:friends', ...doodlerFriends() }];
+    const backdrop = css(document.createElement('div'),
       'position:fixed;inset:0;z-index:2147483645;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);'
       + 'display:grid;place-items:center');
-    overlay.onclick = e => { if (e.target === overlay) close(); };
-    frame = css(document.createElement('iframe'),
+    backdrop.onclick = e => { if (e.target === backdrop) close(); };
+    const iframe = css(document.createElement('iframe'),
       `width:min(1280px,96vw);height:min(900px,94vh);border:0;border-radius:12px;background:${isDark() ? '#1b1d24' : '#f8f8f8'};`
       + 'box-shadow:0 20px 60px rgba(0,0,0,.35)');
-    frame.src = frameUrl();
-    overlay.appendChild(frame);
-    document.body.appendChild(overlay);
+    iframe.src = frameUrl();
+    backdrop.appendChild(iframe);
+    document.body.appendChild(backdrop);
+    overlay = backdrop;
+    frame = iframe;
     document.addEventListener('keydown', escClose);
   }
 
@@ -102,8 +135,10 @@
     document.removeEventListener('keydown', escClose);
   }
 
+  /** @param {KeyboardEvent} e */
   function escClose(e) { if (e.key === 'Escape') close(); }
 
+  /** @param {string} text */
   function toast(text) {
     const t = css(document.createElement('div'),
       'position:fixed;right:18px;bottom:84px;z-index:2147483646;padding:12px 16px;border-radius:12px');
@@ -113,6 +148,7 @@
     setTimeout(() => t.remove(), 7000);
   }
 
+  /** @template T @param {() => T} check @param {number} ms @returns {Promise<T>} */
   function waitFor(check, ms) {
     return new Promise(resolve => {
       const until = Date.now() + ms;
@@ -132,10 +168,11 @@
     return () => style.remove();
   }
 
+  /** @param {object} sdj */
   async function attach(sdj) {
-    if (document.querySelector('.drawing-dialog'))
+    if (document.querySelector(SLOWLY.editor))
       return toast('Close the open Slowly drawing editor first, then send again.');
-    if (!findOpener()) document.querySelector('button.rounded-pill i.icon-pencil')?.closest('button')?.click();
+    if (!findOpener()) document.querySelector(SLOWLY.replyPill)?.closest('button')?.click();
     const opener = await waitFor(findOpener, 3000);
     if (!opener || opener.disabled) return toast('Open a letter to reply to, then send the drawing again.');
     localStorage.setItem(PENDING, JSON.stringify(sdj));
@@ -145,25 +182,28 @@
       opener.click();
       nativeClick = false;
       if (!await waitFor(() => !localStorage.getItem(PENDING), 5000)) throw new Error('the editor did not pick the drawing up');
-      const confirm = await waitFor(() => [...document.querySelectorAll('.modal-footer .btn-primary')].pop(), 3000);
-      if (!confirm) throw new Error('no restore prompt');
+      const confirm = await waitFor(() => /** @type {HTMLElement | undefined} */ ([...document.querySelectorAll(SLOWLY.restoreConfirm)].pop()), 3000);
+      if (!confirm) throw new SelectorMissing('restoreConfirm', 'no restore prompt');
       confirm.click();
       const done = await waitFor(() => {
-        const b = document.querySelector('.drawing-dialog .drawing-done');
+        const b = /** @type {HTMLButtonElement | null} */ (document.querySelector(SLOWLY.editorDone));
         return b && !b.disabled && b;
       }, 3000);
-      if (!done) throw new Error('save button not ready');
+      if (!done) throw new SelectorMissing('editorDone', 'save button not ready');
       done.click();
-      const closed = await waitFor(() => !document.querySelector('.drawing-dialog')
-        || document.querySelector('.drawing-dialog .alert-warning'), SAVE_TIMEOUT_MS);
-      if (!closed || document.querySelector('.drawing-dialog')) throw new Error('saving failed');
+      const closed = await waitFor(() => !document.querySelector(SLOWLY.editor)
+        || document.querySelector(SLOWLY.editorWarning), SAVE_TIMEOUT_MS);
+      if (!closed || document.querySelector(SLOWLY.editor)) throw new Error('saving failed');
       show();
       toast('Drawing attached to your letter.');
     } catch (err) {
       nativeClick = false;
       localStorage.removeItem(PENDING);
       show();
-      toast(`Could not attach automatically (${err.message}). Finish in the Slowly editor.`);
+      const reason = err instanceof Error ? err.message : String(err);
+      if (err instanceof SelectorMissing) console.error('doodler_selector_missing', { selector: err.selector, reason });
+      else console.error('doodler_attach_failed', { reason });
+      toast(`Could not attach automatically (${reason}). Finish in the Slowly editor.`);
     }
   }
 

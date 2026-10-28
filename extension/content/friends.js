@@ -63,7 +63,7 @@
 
   globalThis.doodlerFriends = () => {
     let contacts;
-    try { contacts = JSON.parse(JSON.parse(localStorage.getItem('persist:slowly')).contacts); } catch { return { friends: [], current: null }; }
+    try { contacts = JSON.parse(JSON.parse(localStorage.getItem('persist:slowly') ?? '').contacts); } catch { return { friends: [], current: null }; }
     const friends = Object.values(contacts)
       .filter(c => c && typeof c === 'object' && Number.isFinite(c.user_id) && c.name)
       .map(c => ({ userId: c.user_id, name: c.name, country: c.location_code || '', hash: encode(c.id) }))
