@@ -61,6 +61,8 @@ with sync_playwright() as p:
     def act(sel, method='click', *args, **kw):
         getattr(ui(sel), method)(*args, **kw)
         close_pops()
+    def set_dark(on):
+        if (page.locator('#theme').get_attribute('aria-pressed') == 'true') != on: act('#theme')
 
     drag([(60, 60), (120, 90), (180, 60), (240, 120)])
     page.keyboard.press('l'); drag([(60, 200), (300, 260)])
@@ -125,7 +127,7 @@ with sync_playwright() as p:
     act('#libSave', 'click')
     page.wait_for_timeout(300)
     print('library cards', page.locator('#libList .card').count())
-    act('#dark', 'check', force=True)
+    set_dark(True)
     ui('#libList')
     page.wait_for_timeout(200)
     page.screenshot(path=str(OUT / f'6-library-dark{SUFFIX}.png'))
@@ -286,11 +288,11 @@ with sync_playwright() as p:
     check('snap works zoomed', all(on_grid(v) for p in (s[0], s[-1]) for v in p[:2]), s)
     page.screenshot(path=str(OUT / f'9-grid-zoom{SUFFIX}.png'))
     page.keyboard.press('0')
-    act('#dark', 'check', force=True)
+    set_dark(True)
     page.keyboard.press('b')
     drag([(100, 700), (200, 640), (300, 700)])
     page.screenshot(path=str(OUT / f'10-grid-dark{SUFFIX}.png'))
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
 
     page.reload(); page.wait_for_timeout(500)
     check('grid, snap and spacing persist', page.locator('#gridOn').is_checked() and page.locator('#snapOn').is_checked() and page.locator('#gridSpacing').input_value() == '48')
@@ -335,7 +337,7 @@ with sync_playwright() as p:
     act('#rainbow', 'uncheck', force=True)
 
     act('#clear', 'click')
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
     U = box['width'] / 720
     def cv(x, y):
         b = paper_box()
@@ -586,14 +588,14 @@ with sync_playwright() as p:
     hs = page.locator('#sel .handle').first.bounding_box()
     check('handles keep their screen size at zoom', abs(hs['width'] - 11.5) < 1, hs['width'])
     page.keyboard.press('0')
-    act('#dark', 'check', force=True)
+    set_dark(True)
     page.screenshot(path=str(OUT / f'12-select-dark{SUFFIX}.png'))
     zoom_on_selection(3)
     page.screenshot(path=str(OUT / f'13-select-dark-zoom{SUFFIX}.png'))
     page.keyboard.press('0')
     page.keyboard.press('b')
     check('leaving the select tool drops the selection', halos() == 0 and page.locator('#sel .handle').count() == 0)
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
     act('#rainbow', 'uncheck', force=True)
     act('#clear', 'click')
     act('#eraserMode', 'select_option', 'cut')
@@ -645,9 +647,9 @@ with sync_playwright() as p:
     assert 0 < scribble['fill'] < hatch['fill'] and scribble['worst'] < 1
     page.mouse.click(box['x'] + 30, box['y'] + 30)
     print('fill outside', page.evaluate('__doodler.strokes.length'), page.locator('#status').inner_text())
-    act('#dark', 'check', force=True)
+    set_dark(True)
     page.screenshot(path=str(OUT / f'9-fill-dark{SUFFIX}.png'))
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
 
     def load_square(extra):
         sq = [{'color': 'black', 'weight': 3, 'startOffset': i * 300, 'points': pts} for i, pts in enumerate([
@@ -1037,7 +1039,10 @@ with sync_playwright() as p:
     page.locator('#copy').click()
     check('Copy SDJ fills the text', page.evaluate('document.getElementById("out").value').startswith('{'))
     page.evaluate('document.getElementById("advanced").open = false')
-    check('the dark theme switch is in the menu in standalone mode', page.locator('#dark').count() == 1 and page.locator('label[for=dark]').is_visible())
+    set_dark(True)
+    check('the theme button flips the editor to dark and back', page.evaluate('document.documentElement.classList.contains("theme-dark")') and page.locator('#theme').get_attribute('aria-pressed') == 'true')
+    set_dark(False)
+    check('the theme button flips back to light', not page.evaluate('document.documentElement.classList.contains("theme-dark")'))
     check('shortcuts are collapsed in the menu', not page.locator('#popMore .keys').is_visible() and page.locator('#popMore summary', has_text='Keyboard shortcuts').is_visible())
     page.locator('#popMore summary', has_text='Keyboard shortcuts').click()
     check('the shortcuts list opens inline', page.locator('#popMore .keys').is_visible() and page.locator('#popMore .keys dd', has_text='select all').is_visible())
@@ -1272,7 +1277,7 @@ with sync_playwright() as p:
     lay(row('l2', '.layer-lock'))
     lay(row(layers()[-2]['id']))
     for theme in ('light', 'dark'):
-        if theme == 'dark': act('#dark', 'check', force=True)
+        if theme == 'dark': set_dark(True)
         for w, h in ((1280, 900), (900, 700)):
             page.set_viewport_size({'width': w, 'height': h})
             ui('#layerList')
@@ -1291,9 +1296,9 @@ with sync_playwright() as p:
             if w == 1280: page.locator(row(active(), '.layer-delete')).hover()
             page.screenshot(path=str(OUT / f'14-layers-{theme}-{w}{SUFFIX}.png'))
             close_pops()
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
     for theme in ('light', 'dark'):
-        if theme == 'dark': act('#dark', 'check', force=True)
+        if theme == 'dark': set_dark(True)
         for w, h in ((1280, 900), (900, 700)):
             page.set_viewport_size({'width': w, 'height': h})
             page.wait_for_timeout(150)
@@ -1317,7 +1322,7 @@ with sync_playwright() as p:
             close_pops()
             page.wait_for_timeout(300)
             page.screenshot(path=str(OUT / f'15-toast-canvas-{theme}-{w}{SUFFIX}.png'))
-    act('#dark', 'uncheck', force=True)
+    set_dark(False)
 
     page.set_viewport_size({'width': 1280, 'height': 900})
     item = {'id': 'many', 'name': 'many', 'savedAt': 2, 'layers': {'list': [{'id': 'l1', 'name': 'sketch', 'hidden': True, 'locked': False}, {'id': 'l2', 'name': 'ink', 'hidden': False, 'locked': False}], 'active': 'l2', 'of': [0] * 1000},

@@ -21,9 +21,10 @@
     </button>
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
+    <button class="drawing-icon-button bar-button" id="theme" title="Preview in the other theme (nothing changes in what is sent)" aria-pressed="false"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v16a8 8 0 0 0 0-16z" fill="currentColor"/></svg></button>
     <button class="drawing-icon-button bar-button" id="fullscreen" title="Full screen (Shift+F)" aria-pressed="false"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
     <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing (hold or right-click for its options)"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
-    <button class="drawing-icon-button bar-button" id="moreBtn" popovertarget="popMore" title="More: share, shortcuts, theme"><svg class="svg-icon" style="stroke-width: 3.2" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
+    <button class="drawing-icon-button bar-button" id="moreBtn" popovertarget="popMore" title="More: share, shortcuts"><svg class="svg-icon" style="stroke-width: 3.2" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
     <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
     <button class="drawing-icon-button bar-button" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
   </div>
@@ -122,12 +123,6 @@
       </div>
       <textarea class="form-control" id="out" spellcheck="false" aria-label="SDJ"></textarea>
     </details>
-  </section>
-  <section id="themeSection">
-    <div class="custom-control custom-switch">
-      <input type="checkbox" class="custom-control-input" id="dark">
-      <label class="custom-control-label" for="dark">Dark theme</label>
-    </div>
   </section>
   <section>
     <details id="keysBox">

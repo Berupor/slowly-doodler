@@ -77,7 +77,7 @@ async function loadSlowlyStyles() {
 document.documentElement.classList.toggle('theme-dark', params.get('theme') === 'dark');
 Promise.race([loadSlowlyStyles(), new Promise(r => setTimeout(r, STYLE_WAIT_MS))])
   .then(() => document.documentElement.classList.add('styled'));
-$('dark').checked = isDark();
+$('theme').setAttribute('aria-pressed', String(isDark()));
 
 /**
  * @typedef {{ layers: L.Layer[], active: string }} LayerState
@@ -1395,8 +1395,10 @@ replayButton.onclick = () => {
   else if (replay === null) startReplay();
   else stopReplay();
 };
-$('dark').onchange = () => {
-  document.documentElement.classList.toggle('theme-dark', $('dark').checked);
+$('theme').onclick = () => {
+  const dark = !isDark();
+  document.documentElement.classList.toggle('theme-dark', dark);
+  $('theme').setAttribute('aria-pressed', String(dark));
   buildBars();
   renderInk();
   renderLayers();
@@ -1640,10 +1642,12 @@ document.addEventListener('fullscreenchange', () => {
   $('fullscreen').setAttribute('aria-pressed', String(on));
 });
 window.addEventListener('resize', () => { setView(view.cx, view.cy, view.zoom); showWeight(); });
+const dock = /** @type {HTMLElement} */ (document.querySelector('.dock'));
 new ResizeObserver(([e]) => {
-  document.documentElement.style.setProperty('--dock-h', `${e.borderBoxSize[0].blockSize}px`);
+  const h = e.borderBoxSize[0].blockSize;
+  document.documentElement.style.setProperty('--dock-h', `${h ? h + parseFloat(getComputedStyle(dock).bottom) : 0}px`);
   setView(view.cx, view.cy, view.zoom);
-}).observe($('importBar'));
+}).observe(dock);
 document.addEventListener('keyup', e => {
   if (e.key !== ' ') return;
   setSpace(false);
@@ -1653,7 +1657,6 @@ document.addEventListener('change', e => { if (e.target instanceof HTMLSelectEle
 window.addEventListener('blur', () => setSpace(false));
 $('zoom').onclick = () => resetView();
 
-$('themeSection').hidden = embedded;
 $('close').hidden = !embedded;
 const closeEditor = () => window.parent.postMessage({ type: 'doodler:close' }, SLOWLY_ORIGIN);
 $('close').onclick = closeEditor;
