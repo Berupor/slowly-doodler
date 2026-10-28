@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, W, H, validate, buildSdj } from '../extension/editor/sdj.js';
+import { LIMITS, STROKE_SCALE, W, H, validate, buildSdj } from '../extension/editor/sdj.js';
 import {
   pointInPolygon, insideShare, lassoPick, hitStroke, bounds, translate, scaleAbout, rotateAbout, applyMatrix, compose, transformStroke,
   fitShift, duplicateShift, scaleFactors, snapAngle, appendTimeline, pasteError, parseClip,
@@ -79,6 +79,37 @@ describe('hitStroke', () => {
   it('hits a one-point stroke', () => {
     const dot = stroke([[10, 10, 0]]);
     assert.equal(hitStroke([dot], [12, 10], 0), dot);
+  });
+
+  it('skips a stroke whose box is out of reach and one the filter rejects, falling through to the one below', () => {
+    const far = line(500, 500, 600, 500);
+    const under = line(0, 100, 200, 100);
+    const over = line(0, 100, 200, 100);
+    assert.equal(hitStroke([under, far], [50, 100], 0), under);
+    assert.equal(hitStroke([far], [50, 100], 0), null);
+    assert.equal(hitStroke([under, over], [50, 100], 0, s => s !== over), under);
+    assert.equal(hitStroke([over], [50, 100], 0, () => false), null);
+  });
+
+  it('reaches past the end of a stroke by half its width plus the tolerance, and keeps working after the first lookup', () => {
+    const thick = line(0, 100, 100, 100, { weight: 10 });
+    const reach = STROKE_SCALE * 10 / 2;
+    for (let i = 0; i < 2; i++) {
+      assert.equal(hitStroke([thick], [100 + reach - 0.01, 100], 0), thick);
+      assert.equal(hitStroke([thick], [100 + reach + 0.01, 100], 0), null);
+      assert.equal(hitStroke([thick], [100 + reach + 0.01, 100], 1), thick);
+      assert.equal(hitStroke([thick], [50, 100 - reach - 0.01], 0), null);
+    }
+  });
+
+  it('finds a stroke among thousands', () => {
+    const many = Array.from({ length: 5000 }, (_, i) => line(i * 10, 0, i * 10 + 5, 0));
+    assert.equal(hitStroke(many, [2502, 0], 0), many[250]);
+    assert.equal(hitStroke(many, [2507, 40], 0), null);
+  });
+
+  it('never hits a stroke without points', () => {
+    assert.equal(hitStroke([stroke([])], [0, 0], 100), null);
   });
 });
 

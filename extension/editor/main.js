@@ -3,7 +3,7 @@ import { importSvg } from './import-svg.js';
 import { photoToPolylines, textToPolylines } from './raster.js';
 import * as lib from './library.js';
 import * as P from './precision.js';
-import { createSelector, compose, transformStroke, IDENTITY } from './select.js';
+import { createSelector, hitStroke, compose, transformStroke, IDENTITY } from './select.js';
 import * as F from './fill.js';
 import * as L from './layers.js';
 import { handDrawn } from './sketchy.js';
@@ -59,8 +59,6 @@ const board = /** @type {SVGSVGElement} */ (document.querySelector('#board'));
 const ink = $g('ink'), live = $g('live'), ref = $g('ref'), guides = $g('guides');
 const progressBar = /** @type {HTMLProgressElement} */ (document.getElementById('progress'));
 const friendSelect = /** @type {HTMLSelectElement} */ (document.getElementById('friend'));
-/** @type {WeakMap<Element, S.Stroke>} */
-const strokeOf = new WeakMap();
 const embedded = window.parent !== window;
 const params = new URLSearchParams(location.search);
 const isDark = () => document.documentElement.classList.contains('theme-dark');
@@ -269,7 +267,6 @@ function renderInk(list = pending ? [...strokes, ...pending.made] : strokes) {
 /** @param {S.Stroke} s */
 function inkEl(s) {
   const el = pathEl(s.points, s.color, s.weight);
-  strokeOf.set(el, s);
   elementOf.set(s, el);
   return el;
 }
@@ -286,16 +283,10 @@ function patchInk(before, after) {
   }
 }
 
-/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eraser may touch */
-function editableAt(el) {
-  const s = el ? strokeOf.get(el) : undefined;
-  return s && L.editableIds(layers).has(String(s.layer)) ? s : undefined;
-}
-
-/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eyedropper may read, locked layers included */
-function shownAt(el) {
-  const s = el ? strokeOf.get(el) : undefined;
-  return s && L.shownIds(layers).has(String(s.layer)) ? s : undefined;
+/** @param {{ clientX: number, clientY: number }} e @returns {number[][]} the brush probes in canvas units */
+function probesAt(e) {
+  const p = boardPoint(e), s = pxPerUnit();
+  return ERASER_PROBE.map(([dx, dy]) => [p.x + dx / s, p.y + dy / s]);
 }
 
 /** @param {Gesture} g @returns {S.Point[]} */
@@ -363,13 +354,14 @@ function toCanvas(e) {
 
 /** @param {PointerEvent} e @param {Set<S.Stroke>} erased */
 function eraseAt(e, erased) {
-  for (const [dx, dy] of ERASER_PROBE) {
-    const el = document.elementFromPoint(e.clientX + dx, e.clientY + dy);
-    const stroke = editableAt(el);
-    if (stroke && el instanceof SVGElement && !erased.has(stroke)) {
-      erased.add(stroke);
-      el.style.display = 'none';
-    }
+  const editable = L.editableIds(layers);
+  const usable = (/** @type {S.Stroke} */ s) => editable.has(String(s.layer)) && !erased.has(s);
+  for (const pt of probesAt(e)) {
+    const stroke = hitStroke(strokes, pt, 0, usable);
+    if (!stroke) continue;
+    erased.add(stroke);
+    const el = elementOf.get(stroke);
+    if (el instanceof SVGElement) el.style.display = 'none';
   }
 }
 
@@ -438,8 +430,8 @@ function setPicking(on) {
 /** @param {PointerEvent} e */
 function pickAt(e) {
   setPicking(false);
-  const hits = ERASER_PROBE.map(([dx, dy]) => document.elementFromPoint(e.clientX + dx, e.clientY + dy))
-    .map(shownAt).filter(s => !!s);
+  const shown = L.shownIds(layers);
+  const hits = probesAt(e).map(pt => hitStroke(strokes, pt, 0, s => shown.has(String(s.layer)))).filter(s => !!s);
   const stroke = hits.sort((a, b) => strokes.indexOf(b) - strokes.indexOf(a))[0];
   if (!stroke) return say('no stroke under the pointer');
   if (!(stroke.color in S.BASE_COLORS) && stroke.color !== S.CANVAS_TOKEN && !customColors.includes(stroke.color)) customColors.push(stroke.color);

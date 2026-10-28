@@ -59,11 +59,27 @@ export function distToSegment([px, py], [ax, ay], [bx, by]) {
   return Math.hypot(px - ax - t * dx, py - ay - t * dy);
 }
 
-/** @param {S.Stroke[]} strokes @param {number[]} pt @param {number} tol extra reach beyond the stroke's own half width; topmost hit wins */
-export function hitStroke(strokes, pt, tol) {
+/** @type {WeakMap<S.Stroke, Box | null>} */
+const boxOf = new WeakMap();
+
+/** @param {S.Stroke} stroke */
+function strokeBox(stroke) {
+  let box = boxOf.get(stroke);
+  if (box === undefined) boxOf.set(stroke, box = bounds([stroke]));
+  return box;
+}
+
+/**
+ * @param {S.Stroke[]} strokes @param {number[]} pt @param {number} tol extra reach beyond the stroke's own half width; topmost hit wins
+ * @param {(s: S.Stroke) => boolean} [usable] strokes it rejects are skipped
+ */
+export function hitStroke(strokes, pt, tol, usable) {
   for (let i = strokes.length - 1; i >= 0; i--) {
     const { points, weight } = strokes[i];
     const reach = S.STROKE_SCALE * weight / 2 + tol;
+    const box = strokeBox(strokes[i]);
+    if (!box || pt[0] < box.x0 - reach || pt[0] > box.x1 + reach || pt[1] < box.y0 - reach || pt[1] > box.y1 + reach) continue;
+    if (usable && !usable(strokes[i])) continue;
     for (let k = 0; k < points.length; k++)
       if (distToSegment(pt, points[k], points[Math.min(k + 1, points.length - 1)]) <= reach) return strokes[i];
   }
