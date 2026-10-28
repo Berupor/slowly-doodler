@@ -30,12 +30,12 @@
 </header>
 
 <main class="stage">
-  <div class="paper">
-    <svg id="board" viewBox="0 0 720 960" xmlns="http://www.w3.org/2000/svg">
-      <g id="ref"></g><g id="guides"></g><g id="ink"></g><g id="live"></g>
-      <circle id="eraserRing" r="0" style="display: none"/>
-    </svg>
-  </div>
+  <svg id="board" viewBox="0 0 720 960" xmlns="http://www.w3.org/2000/svg">
+    <clipPath id="paperClip"><rect width="720" height="960"/></clipPath>
+    <rect id="paper" width="720" height="960"/>
+    <g clip-path="url(#paperClip)"><g id="ref"></g><g id="guides"></g><g id="ink"></g><g id="live"></g></g>
+    <circle id="eraserRing" r="0" style="display: none"/>
+  </svg>
 
   <div class="side drawing-pill" role="group" aria-label="Brush">
     <svg class="rail-glyph" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3.5"/></svg>

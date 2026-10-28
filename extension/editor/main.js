@@ -22,6 +22,9 @@ const ERASER_PROBE = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]];
 const CUT_RADIUS_PER_WEIGHT = 4;
 const CUT_RADIUS_MIN = 2;
 const ZOOM_MAX = 8;
+const ZOOM_MIN = 0.5;
+const FIT_MARGIN_X = 72, FIT_MARGIN_Y = 16;
+const KEEP_ON_SCREEN = 0.25;
 const ZOOM_STEP = 1.25;
 const WHEEL_ZOOM = 0.01;
 const WHEEL_CAP = 30;
@@ -111,7 +114,7 @@ let filling = false;
 let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
 /** @type {{ px: number, py: number, x: number, y: number } | null} */
 let refDrag = null;
-let view = { x: 0, y: 0, w: W }, spaceDown = false;
+let view = { cx: W / 2, cy: H / 2, zoom: 1 }, spaceDown = false;
 /** @type {{ x: number, y: number } | null} */
 let panDrag = null;
 /** @type {{ x: number, y: number, d: number } | null} */
@@ -443,27 +446,35 @@ const selector = createSelector({
   },
 });
 
-/** @param {number} x @param {number} y @param {number} w */
-function setView(x, y, w) {
-  w = Math.min(W, Math.max(W / ZOOM_MAX, w));
-  const h = w * H / W;
-  view = { x: Math.min(W - w, Math.max(0, x)), y: Math.min(H - h, Math.max(0, y)), w };
-  board.setAttribute('viewBox', `${view.x} ${view.y} ${w} ${h}`);
-  $('zoom').hidden = w === W;
-  $('zoom').textContent = `${Math.round(W / w * 100)}%`;
+const fitScale = () => Math.max(0.01, Math.min((board.clientWidth - 2 * FIT_MARGIN_X) / W, (board.clientHeight - 2 * FIT_MARGIN_Y) / H));
+const clampTo = (/** @type {number} */ v, /** @type {number} */ lo, /** @type {number} */ hi) => Math.min(hi, Math.max(lo, v));
+
+/** @param {number} cx canvas point at the centre of the stage @param {number} cy @param {number} zoom relative to the paper fitted to the stage */
+function setView(cx, cy, zoom) {
+  zoom = clampTo(zoom, ZOOM_MIN, ZOOM_MAX);
+  const s = fitScale() * zoom, w = board.clientWidth / s, h = board.clientHeight / s;
+  cx = clampTo(cx, KEEP_ON_SCREEN * W - w / 2, (1 - KEEP_ON_SCREEN) * W + w / 2);
+  cy = clampTo(cy, KEEP_ON_SCREEN * H - h / 2, (1 - KEEP_ON_SCREEN) * H + h / 2);
+  view = { cx, cy, zoom };
+  board.setAttribute('viewBox', `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
+  board.style.setProperty('--px', String(1 / s));
+  $('zoom').hidden = zoom === 1 && Math.abs(cx - W / 2) < 1 && Math.abs(cy - H / 2) < 1;
+  $('zoom').textContent = `${Math.round(zoom * 100)}%`;
   selector.zoomed();
 }
 
-/** @param {{ x: number, y: number }} p canvas point to keep under the client point @param {number} clientX @param {number} clientY @param {number} w */
-function viewAt(p, clientX, clientY, w) {
-  setView(p.x - (p.x - view.x) / view.w * w, p.y - (p.y - view.y) / view.w * w, w);
+const resetView = () => setView(W / 2, H / 2, 1);
+
+/** @param {{ x: number, y: number }} p canvas point to keep under the client point @param {number} clientX @param {number} clientY @param {number} zoom */
+function viewAt(p, clientX, clientY, zoom) {
+  setView(view.cx, view.cy, zoom);
   const q = boardPoint({ clientX, clientY });
-  setView(view.x + p.x - q.x, view.y + p.y - q.y, view.w);
+  setView(view.cx + p.x - q.x, view.cy + p.y - q.y, view.zoom);
 }
 
 /** @param {number} clientX @param {number} clientY @param {number} factor */
 function zoomAt(clientX, clientY, factor) {
-  viewAt(boardPoint({ clientX, clientY }), clientX, clientY, view.w / factor);
+  viewAt(boardPoint({ clientX, clientY }), clientX, clientY, view.zoom * factor);
 }
 
 /** @param {number} factor */
@@ -500,7 +511,7 @@ board.addEventListener('wheel', e => {
     zoomAt(e.clientX, e.clientY, Math.exp(-dy * WHEEL_ZOOM));
   } else {
     const s = pxPerUnit();
-    setView(view.x + e.deltaX * px / s, view.y + e.deltaY * px / s, view.w);
+    setView(view.cx + e.deltaX * px / s, view.cy + e.deltaY * px / s, view.zoom);
   }
 }, { passive: false });
 
@@ -562,14 +573,14 @@ board.addEventListener('pointermove', e => {
     touches.set(e.pointerId, [e.clientX, e.clientY]);
     if (pinch) {
       const next = pinchState();
-      viewAt(boardPoint({ clientX: pinch.x, clientY: pinch.y }), next.x, next.y, view.w * pinch.d / next.d);
+      viewAt(boardPoint({ clientX: pinch.x, clientY: pinch.y }), next.x, next.y, view.zoom * next.d / pinch.d);
       pinch = next;
       return;
     }
   }
   if (panDrag) {
     const s = pxPerUnit();
-    setView(view.x - (e.clientX - panDrag.x) / s, view.y - (e.clientY - panDrag.y) / s, view.w);
+    setView(view.cx - (e.clientX - panDrag.x) / s, view.cy - (e.clientY - panDrag.y) / s, view.zoom);
     panDrag.x = e.clientX;
     panDrag.y = e.clientY;
     return;
@@ -729,7 +740,7 @@ function showWeight() {
   $('weight').value = String(w);
   $('weightOut').textContent = String(w);
   sizeRail.style.setProperty('--f', railFraction(w));
-  const d = Math.max(2, S.STROKE_SCALE * w * board.clientWidth / W) + 'px';
+  const d = Math.max(2, S.STROKE_SCALE * w * fitScale()) + 'px';
   Object.assign($('weightDot').style, { width: d, height: d, background: S.entryFor(color, palette)[isDark() ? 'dark' : 'light'] });
 }
 
@@ -1512,7 +1523,7 @@ document.addEventListener('keydown', e => {
     if (k === 'y' || e.shiftKey) restore(redoStack, undoStack); else restore(undoStack, redoStack);
   } else if (k === ' ') { e.preventDefault(); setSpace(true); }
   else if (ZOOM_KEYS[k]) { e.preventDefault(); zoomCentered(ZOOM_KEYS[k]); }
-  else if (k === '0') { e.preventDefault(); setView(0, 0, W); }
+  else if (k === '0') { e.preventDefault(); resetView(); }
   else if (!e.ctrlKey && !e.metaKey && k === 'i') setPicking(!picking);
   else if (!e.ctrlKey && !e.metaKey && k === 'g') { prec.grid = !prec.grid; applyPrecision(); }
   else if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && k === 'f') toggleFullscreen();
@@ -1546,10 +1557,10 @@ document.addEventListener('fullscreenchange', () => {
   if (!on) fullscreenLeftAt = performance.now();
   $('fullscreen').setAttribute('aria-pressed', String(on));
 });
-window.addEventListener('resize', () => { setView(view.x, view.y, view.w); showWeight(); });
+window.addEventListener('resize', () => { setView(view.cx, view.cy, view.zoom); showWeight(); });
 new ResizeObserver(([e]) => {
   document.documentElement.style.setProperty('--dock-h', `${e.borderBoxSize[0].blockSize}px`);
-  setView(view.x, view.y, view.w);
+  setView(view.cx, view.cy, view.zoom);
 }).observe($('importBar'));
 document.addEventListener('keyup', e => {
   if (e.key !== ' ') return;
@@ -1558,7 +1569,7 @@ document.addEventListener('keyup', e => {
 });
 document.addEventListener('change', e => { if (e.target instanceof HTMLSelectElement) e.target.blur(); });
 window.addEventListener('blur', () => setSpace(false));
-$('zoom').onclick = () => setView(0, 0, W);
+$('zoom').onclick = () => resetView();
 
 $('prefsTab').hidden = embedded;
 $('close').hidden = !embedded;
