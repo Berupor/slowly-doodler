@@ -195,11 +195,11 @@ describe('sanitize', () => {
   it('falls back to defaults for missing or broken settings', () => {
     assert.deepEqual(sanitize(null), DEFAULTS);
     assert.deepEqual(sanitize('x'), DEFAULTS);
-    assert.deepEqual(sanitize({ spacing: 50, smoothing: 'a', grid: 1 }), DEFAULTS);
+    assert.deepEqual(sanitize({ spacing: 50, smoothing: 'a', grid: 1, compatible: 'yes' }), DEFAULTS);
   });
 
   it('keeps valid values and clamps smoothing', () => {
-    assert.deepEqual(sanitize({ grid: true, snap: true, spacing: 24, smoothing: 0 }), { grid: true, snap: true, spacing: 24, smoothing: 0 });
+    assert.deepEqual(sanitize({ grid: true, snap: true, spacing: 24, smoothing: 0, compatible: true }), { grid: true, snap: true, spacing: 24, smoothing: 0, compatible: true });
     assert.equal(sanitize({ smoothing: 400 }).smoothing, 100);
     assert.equal(sanitize({ smoothing: -4 }).smoothing, 0);
   });

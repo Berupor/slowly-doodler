@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, W, H, buildSdj, validate, timed, pathD, pathPrefixes, nearestBase, hexToRgb, simplifyStrokes, cutStrokes } from '../extension/editor/sdj.js';
+import { LIMITS, W, H, buildSdj, validate, timed, pathD, pathPrefixes, nearestBase, hexToRgb, simplifyStrokes, cutStrokes, snapStroke, isStandard } from '../extension/editor/sdj.js';
 
 const stroke = (overrides = {}) => ({ color: 'black', weight: 3, startOffset: 0, points: [[0, 0, 0], [10, 10, 50]], ...overrides });
 const sdjOf = (strokes, palette = {}) => buildSdj(strokes, palette);
@@ -240,6 +240,39 @@ describe('nearestBase', () => {
 
   it('treats the light dark-mode black as black even when canvas is allowed', () => {
     assert.equal(nearestBase(hexToRgb('#F5F5F5'), { allowCanvas: true }), 'black');
+  });
+});
+
+describe('snapStroke', () => {
+  const palette = { c1e88e4: { light: '#1e88e4', dark: '#1e88e4' } };
+  const pen = overrides => stroke({ color: 'red', weight: 3, ...overrides });
+
+  it('returns a standard stroke untouched', () => {
+    const s = pen({ weight: 6 });
+    assert.equal(snapStroke(s, palette), s);
+    const onCanvas = pen({ color: 'canvas', weight: 1 });
+    assert.equal(snapStroke(onCanvas, palette), onCanvas);
+  });
+
+  it('moves a custom colour to the nearest base colour', () => {
+    assert.equal(snapStroke(pen({ color: 'c1e88e4' }), palette).color, 'blue');
+  });
+
+  it('moves an off-list weight to the nearest of 1, 3, 6', () => {
+    for (const [from, to] of [[0.5, 1], [2, 1], [2.5, 3], [4, 3], [5, 6], [8, 6]]) assert.equal(snapStroke(pen({ weight: from }), palette).weight, to, String(from));
+  });
+
+  it('keeps the points and timing and does not mutate the input', () => {
+    const s = pen({ color: 'c1e88e4', weight: 4.5, startOffset: 700 });
+    const snapped = snapStroke(s, palette);
+    assert.equal(snapped.points, s.points);
+    assert.equal(snapped.startOffset, 700);
+    assert.equal(s.color, 'c1e88e4');
+    assert.equal(s.weight, 4.5);
+  });
+
+  it('falls back to a base colour for a token missing from the palette', () => {
+    assert.ok(isStandard(snapStroke(pen({ color: 'cffffff' }), {})));
   });
 });
 

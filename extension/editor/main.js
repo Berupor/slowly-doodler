@@ -18,6 +18,7 @@ const MIN_SHAPE_MS = 250;
 const GAP_CAP_MS = 600;
 const STROKE_GAP_MS = 400;
 const HISTORY_DEPTH = 100;
+const WEIGHT_STEP = 0.5;
 const ERASER_PROBE = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]];
 const CUT_RADIUS_PER_WEIGHT = 4;
 const CUT_RADIUS_MIN = 2;
@@ -441,10 +442,11 @@ function pickAt(e) {
   const hits = probesAt(e).map(pt => hitStroke(strokes, pt, 0, s => shown.has(String(s.layer)))).filter(s => !!s);
   const stroke = hits.sort((a, b) => strokes.indexOf(b) - strokes.indexOf(a))[0];
   if (!stroke) return say('no stroke under the pointer');
-  if (!(stroke.color in S.BASE_COLORS) && stroke.color !== S.CANVAS_TOKEN && !customColors.includes(stroke.color)) customColors.push(stroke.color);
-  color = stroke.color;
-  setWeight(stroke.weight);
-  say(`picked ${stroke.color}, weight ${stroke.weight}`);
+  const picked = prec.compatible ? S.snapStroke(stroke, palette) : stroke;
+  if (!(picked.color in S.BASE_COLORS) && picked.color !== S.CANVAS_TOKEN && !customColors.includes(picked.color)) customColors.push(picked.color);
+  color = picked.color;
+  setWeight(picked.weight);
+  say(`picked ${picked.color}, weight ${picked.weight}`);
 }
 const selector = createSelector({
   board, typing: TYPING_TARGET, gapMs: STROKE_GAP_MS, say, pathEl, boardPoint, pxPerUnit,
@@ -735,14 +737,16 @@ function buildBars() {
       if (tool === 'eraser') tool = 'pen';
       if (!pending) return selector.paint(t);
       $('importColors').value = 'one';
+      lockImportColors();
       retrace();
     },
   });
   pillButtons('colors', 'drawing-color-ring', Object.keys(S.BASE_COLORS).map(t => swatch(t)));
   pillButtons('customColors', 'drawing-color-ring', customColors.map(t => swatch(t, () => { customColors = customColors.filter(c => c !== t); })));
   $('customColors').append(addSwatch);
-  $('customHead').hidden = !customColors.length;
-  $('colorWarn').hidden = color in S.BASE_COLORS;
+  $('customHead').hidden = prec.compatible || !customColors.length;
+  $('customColors').hidden = prec.compatible;
+  $('colorWarn').hidden = prec.compatible || color in S.BASE_COLORS;
   board.classList.toggle('erasing', tool === 'eraser');
   setPicking(false);
   selector.sync(tool);
@@ -773,8 +777,17 @@ function showWeight() {
   Object.assign($('weightDot').style, { width: d, height: d, background: S.entryFor(color, palette)[isDark() ? 'dark' : 'light'] });
 }
 
+const compatWeight = w => prec.compatible ? S.nearestWeight(w) : w;
+
+function stepWeight(direction) {
+  const w = shownWeight();
+  if (!prec.compatible) return w + direction * WEIGHT_STEP;
+  const stops = direction > 0 ? S.SIZES : [...S.SIZES].reverse();
+  return stops.find(stop => (stop - w) * direction > 0) ?? w;
+}
+
 function setWeight(w) {
-  w = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
+  w = compatWeight(Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w)));
   if (pending) return setImportWeight(w);
   weight = w;
   if (tool === 'eraser' && !cutMode()) tool = 'pen';
@@ -798,6 +811,9 @@ function updateStats() {
   stats.title = [...parts.map(p => p.text), ...(skipped ? [`${skipped} on hidden layers, not sent`] : [])].join(' · ');
   stats.classList.toggle('drawing-count-limit', !!over);
   $('badge').hidden = shown.every(S.isStandard);
+  const offList = prec.compatible ? shown.filter(s => !S.isStandard(s)).length : 0;
+  $('compatNotice').hidden = !offList;
+  $('compatText').textContent = `${offList} strokes use custom colours or weights`;
   $('undo').disabled = !undoStack.length;
   $('redo').disabled = !redoStack.length;
 }
@@ -946,7 +962,7 @@ const retraceSoon = debounce(retrace);
 function applyPreset() {
   const preset = IMPORT_PRESETS[$('importPreset').value];
   setRange('importDetail', preset.detail);
-  setRange('importWeight', preset.weight);
+  setRange('importWeight', compatWeight(preset.weight));
 }
 
 /** @param {Pending['kind']} kind @param {string | ImageBitmap} source @param {string} name of the layer it lands on, a text import is named after its text */
@@ -963,6 +979,7 @@ function startImport(kind, source, name) {
   for (const o of colorSelect.options) o.hidden = (o.value === 'exact' && kind !== 'svg') || (o.value !== 'one' && kind === 'text');
   if (presetSelect.selectedOptions[0]?.hidden) presetSelect.value = 'outline';
   colorSelect.value = kind === 'svg' ? 'snap' : 'one';
+  lockImportColors();
   applyPreset();
   setRange('importRough', 0);
   $('importBar').hidden = false;
@@ -997,8 +1014,15 @@ function cancelImport() {
   say('import cancelled');
 }
 
+function lockImportColors() {
+  const locked = prec.compatible && pending?.kind !== 'text';
+  $('importColors').disabled = locked;
+  if (locked) $('importColors').value = 'snap';
+}
+
 /** @param {number} w */
 function setImportWeight(w) {
+  w = compatWeight(w);
   setRange('importWeight', w);
   showWeight();
   if (!pending) return;
@@ -1422,6 +1446,7 @@ function applyPrecision() {
   $('smoothingRail').style.setProperty('--f', String(prec.smoothing / 100));
   $('gridOn').checked = prec.grid;
   $('snapOn').checked = prec.snap;
+  $('compatible').checked = prec.compatible;
   $('gridSpacing').value = String(prec.spacing);
   P.renderGuides(guides, prec.grid ? prec.spacing : 0);
   P.saveSettings(prec);
@@ -1429,6 +1454,27 @@ function applyPrecision() {
 $('smoothing').oninput = () => { prec.smoothing = Number($('smoothing').value); applyPrecision(); };
 $('gridOn').onchange = () => { prec.grid = $('gridOn').checked; applyPrecision(); };
 $('snapOn').onchange = () => { prec.snap = $('snapOn').checked; applyPrecision(); };
+$('compatible').onchange = () => {
+  prec.compatible = $('compatible').checked;
+  applyPrecision();
+  if (prec.compatible) {
+    color = S.snapColor(color, palette);
+    weight = S.nearestWeight(weight);
+  }
+  lockImportColors();
+  if (pending) {
+    setImportWeight(Number($('importWeight').value));
+    retrace();
+  }
+  buildBars();
+  updateStats();
+};
+$('compatSnap').onclick = () => {
+  selector.clear();
+  const shown = L.shownIds(layers);
+  commit(strokes.map(s => shown.has(String(s.layer)) ? S.snapStroke(s, palette) : s));
+  say('strokes snapped to the base colours and weights 1, 3, 6');
+};
 $('gridSpacing').onchange = () => { prec.spacing = Number($('gridSpacing').value); applyPrecision(); };
 applyPrecision();
 $('weight').oninput = () => setWeight(Number($('weight').value));
@@ -1612,8 +1658,8 @@ document.addEventListener('keydown', e => {
   else if (!e.ctrlKey && !e.metaKey && k === 'g') { prec.grid = !prec.grid; applyPrecision(); }
   else if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && k === 'f') toggleFullscreen();
   else if (!e.ctrlKey && !e.metaKey && TOOL_KEYS[k]) { tool = TOOL_KEYS[k]; buildBars(); }
-  else if (k === '[') setWeight(shownWeight() - 0.5);
-  else if (k === ']') setWeight(shownWeight() + 0.5);
+  else if (k === '[') setWeight(stepWeight(-1));
+  else if (k === ']') setWeight(stepWeight(1));
   else if (k === 'enter' && pending && !(e.target instanceof Element && e.target.closest('#importBar, [popover]'))) {
     e.preventDefault();
     finishImport();

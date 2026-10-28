@@ -234,6 +234,7 @@ button:focus:not(:focus-visible) { outline: 0; }
 .hud .drawing-pill { height: 30px; border-radius: 15px; color: var(--lighter); }
 .hud .drawing-zoom { color: var(--drawing-ink); }
 .hud .drawing-count-limit { color: var(--over); }
+.hud .btn-sm { height: 22px; margin: 0 -6px 0 4px; padding: 0 8px; border-radius: 11px; font-size: 12px; }
 .toast {
   position: fixed; inset: auto auto var(--toast-bottom) 50%; translate: -50% 0; margin: 0; gap: 12px; max-width: min(560px, calc(100% - 140px));
   height: auto; min-height: 36px; padding: 6px 16px; font-size: 13px; color: var(--drawing-ink);

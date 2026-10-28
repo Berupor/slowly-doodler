@@ -35,6 +35,7 @@ To update, download or `git pull` again and press the reload icon on the extensi
   ![A drawing attached to the reply](docs/attached.png)
 
 - `+` Insert takes a photo, SVG, text or reference image. The import lands as a preview you can move, resize and restyle (Outline, Sketch, Detailed, Ink scan), then Done adds it on a new layer. A reference image is for tracing and never sent; its opacity, scale and position live in a Reference row at the bottom of Layers.
+- Compatible mode (More menu, off by default) limits the editor to the 12 base colours and weights 1, 3, 6, the values checked in Slowly's mobile apps; strokes already outside that set get a "Snap them" button.
 - Layers (up to 10) exist only in the editor and the library; Send flattens the visible ones.
 - The half-filled circle in the top bar previews the drawing in the other theme, also inside Slowly; it never changes what is sent. The `...` menu has the friend picker, shortcuts and an Advanced block with the raw sdj. Hold or right-click Replay for its speed; Clear sits at the bottom of the left strip.
 - Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.

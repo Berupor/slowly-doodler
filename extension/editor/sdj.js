@@ -181,6 +181,16 @@ export function nearestBase(rgb, { allowCanvas = false } = {}) {
   return best;
 }
 
+/** @param {string} token @param {Palette} palette */
+export function snapColor(token, palette) {
+  return token in BASE_COLORS || token === CANVAS_TOKEN ? token : nearestBase(hexToRgb(entryFor(token, palette).light));
+}
+
+/** @param {Stroke} s @param {Palette} palette @returns {Stroke} the same object when it is already standard */
+export function snapStroke(s, palette) {
+  return isStandard(s) ? s : { ...s, color: snapColor(s.color, palette), weight: nearestWeight(s.weight) };
+}
+
 const CUT_EPS = 1e-6;
 const MIN_PIECE = 0.5;
 

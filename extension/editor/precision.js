@@ -3,7 +3,7 @@ import { W, H, LIMITS, r2 } from './sdj.js';
 const NS = 'http://www.w3.org/2000/svg';
 const SETTINGS_KEY = 'doodler:precision';
 export const GRID_SPACINGS = [24, 48, 120];
-export const DEFAULTS = { grid: false, snap: false, smoothing: 20, spacing: 48 };
+export const DEFAULTS = { grid: false, snap: false, smoothing: 20, spacing: 48, compatible: false };
 export const ANGLE_STEP = Math.PI / 12;
 const ROPE_PX_AT_MAX = 64;
 const MIN_STEP_PX = [1.5, 6];
@@ -22,6 +22,7 @@ export function sanitize(raw) {
   return {
     grid: o.grid === true,
     snap: o.snap === true,
+    compatible: o.compatible === true,
     smoothing: Number.isFinite(smoothing) ?Math.min(100, Math.max(0, Math.round(smoothing))) : DEFAULTS.smoothing,
     spacing: GRID_SPACINGS.includes(/** @type {number} */ (o.spacing)) ? /** @type {number} */ (o.spacing) : DEFAULTS.spacing,
   };
