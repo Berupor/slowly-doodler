@@ -6,6 +6,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p jsconfig.json",
     "check": "pnpm lint && pnpm typecheck",
+    "test": "sh tests/bundle.sh && python3 tests/test.py && python3 tests/test.py slowly",
     "zip": "cd extension && zip -r ../slowly-doodler.zip ."
   },
   "devDependencies": {
