@@ -14,6 +14,13 @@ const GAP_CAP_MS = 600;
 const STROKE_GAP_MS = 400;
 const HISTORY_DEPTH = 100;
 const ERASER_PROBE = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]];
+const ZOOM_MAX = 8;
+const ZOOM_STEP = 1.25;
+const WHEEL_ZOOM = 0.01;
+const WHEEL_CAP = 30;
+const LINE_PX = 33;
+/** @type {Record<string, number>} */
+const ZOOM_KEYS = { '=': ZOOM_STEP, '+': ZOOM_STEP, '-': 1 / ZOOM_STEP, '_': 1 / ZOOM_STEP };
 
 const SLOWLY_FONT_CSS = 'https://fonts.googleapis.com/css?family=Open+Sans:400,600,700&display=swap';
 const SLOWLY_FONTS = ['400 14px "Open Sans"', '600 14px "Open Sans"', '20px slowly-icomoon'];
@@ -74,6 +81,13 @@ let erasing = null;
 let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
 /** @type {{ px: number, py: number, x: number, y: number } | null} */
 let refDrag = null;
+let view = { x: 0, y: 0, w: W }, spaceDown = false;
+/** @type {{ x: number, y: number } | null} */
+let panDrag = null;
+/** @type {{ x: number, y: number, d: number } | null} */
+let pinch = null;
+/** @type {Map<number, [number, number]>} */
+const touches = new Map();
 /** @type {number | null} */
 let sessionStart = null;
 /** @type {number | null} */
@@ -224,7 +238,7 @@ function finishGesture(g) {
   commit([...strokes, ...added], { keepClock: true });
 }
 
-/** @param {PointerEvent} e */
+/** @param {{ clientX: number, clientY: number }} e */
 function boardPoint(e) {
   const pt = board.createSVGPoint();
   pt.x = e.clientX; pt.y = e.clientY;
@@ -249,10 +263,82 @@ function eraseAt(e, erased) {
   }
 }
 
+const pxPerUnit = () => board.getScreenCTM()?.a ?? 1;
+
+/** @param {number} x @param {number} y @param {number} w */
+function setView(x, y, w) {
+  w = Math.min(W, Math.max(W / ZOOM_MAX, w));
+  const h = w * H / W;
+  view = { x: Math.min(W - w, Math.max(0, x)), y: Math.min(H - h, Math.max(0, y)), w };
+  board.setAttribute('viewBox', `${view.x} ${view.y} ${w} ${h}`);
+  $('zoom').hidden = w === W;
+  $('zoom').textContent = `${Math.round(W / w * 100)}%`;
+}
+
+/** @param {{ x: number, y: number }} p canvas point to keep under the client point @param {number} clientX @param {number} clientY @param {number} w */
+function viewAt(p, clientX, clientY, w) {
+  setView(p.x - (p.x - view.x) / view.w * w, p.y - (p.y - view.y) / view.w * w, w);
+  const q = boardPoint({ clientX, clientY });
+  setView(view.x + p.x - q.x, view.y + p.y - q.y, view.w);
+}
+
+/** @param {number} clientX @param {number} clientY @param {number} factor */
+function zoomAt(clientX, clientY, factor) {
+  viewAt(boardPoint({ clientX, clientY }), clientX, clientY, view.w / factor);
+}
+
+/** @param {number} factor */
+function zoomCentered(factor) {
+  const r = board.getBoundingClientRect();
+  zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+}
+
+/** @param {boolean} on */
+function setSpace(on) {
+  spaceDown = on;
+  board.classList.toggle('pan', on);
+}
+
+function pinchState() {
+  const [a, b] = [...touches.values()];
+  return { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1 };
+}
+
+function cancelStroke() {
+  if (gesture) { gesture = null; live.replaceChildren(); }
+  if (erasing) { erasing = null; renderInk(); }
+  refDrag = null;
+}
+
+board.addEventListener('wheel', e => {
+  e.preventDefault();
+  const px = e.deltaMode === 1 ? LINE_PX : 1;
+  if (e.ctrlKey || e.metaKey) {
+    const dy = Math.min(WHEEL_CAP, Math.max(-WHEEL_CAP, e.deltaY * px));
+    zoomAt(e.clientX, e.clientY, Math.exp(-dy * WHEEL_ZOOM));
+  } else {
+    const s = pxPerUnit();
+    setView(view.x + e.deltaX * px / s, view.y + e.deltaY * px / s, view.w);
+  }
+}, { passive: false });
+
 board.addEventListener('pointerdown', e => {
-  if (e.button !== 0) return;
-  stopReplay();
+  if (e.button !== 0 && e.button !== 1) return;
   board.setPointerCapture(e.pointerId);
+  if (e.pointerType === 'touch') {
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    if (touches.size > 1) {
+      cancelStroke();
+      pinch = pinchState();
+      return;
+    }
+  }
+  if (e.button === 1 || spaceDown) {
+    panDrag = { x: e.clientX, y: e.clientY };
+    board.classList.add('panning');
+    return;
+  }
+  stopReplay();
   if (refMove) {
     const p = boardPoint(e);
     refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
@@ -271,6 +357,22 @@ board.addEventListener('pointerdown', e => {
 });
 
 board.addEventListener('pointermove', e => {
+  if (touches.has(e.pointerId)) {
+    touches.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch) {
+      const next = pinchState();
+      viewAt(boardPoint({ clientX: pinch.x, clientY: pinch.y }), next.x, next.y, view.w * pinch.d / next.d);
+      pinch = next;
+      return;
+    }
+  }
+  if (panDrag) {
+    const s = pxPerUnit();
+    setView(view.x - (e.clientX - panDrag.x) / s, view.y - (e.clientY - panDrag.y) / s, view.w);
+    panDrag.x = e.clientX;
+    panDrag.y = e.clientY;
+    return;
+  }
   if (refDrag) {
     const p = boardPoint(e);
     refPose.x = S.r2(refDrag.x + p.x - refDrag.px);
@@ -297,8 +399,14 @@ board.addEventListener('pointermove', e => {
   renderLive(gesture);
 });
 
-const endPointer = () => {
-  if (refDrag) refDrag = null;
+/** @param {PointerEvent} e */
+const endPointer = e => {
+  touches.delete(e.pointerId);
+  if (touches.size < 2) pinch = null;
+  if (panDrag) {
+    panDrag = null;
+    board.classList.remove('panning');
+  } else if (refDrag) refDrag = null;
   else if (erasing) {
     const gone = erasing;
     erasing = null;
@@ -836,10 +944,20 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
     e.preventDefault();
     if (k === 'y' || e.shiftKey) restore(redoStack, undoStack); else restore(undoStack, redoStack);
-  } else if (!e.ctrlKey && !e.metaKey && TOOL_KEYS[k]) { tool = TOOL_KEYS[k]; buildBars(); }
+  } else if (k === ' ') { e.preventDefault(); setSpace(true); }
+  else if (ZOOM_KEYS[k]) { e.preventDefault(); zoomCentered(ZOOM_KEYS[k]); }
+  else if (k === '0') { e.preventDefault(); setView(0, 0, W); }
+  else if (!e.ctrlKey && !e.metaKey && TOOL_KEYS[k]) { tool = TOOL_KEYS[k]; buildBars(); }
   else if (k === '[') setWeight(weight - 0.5);
   else if (k === ']') setWeight(weight + 0.5);
 });
+document.addEventListener('keyup', e => {
+  if (e.key !== ' ') return;
+  setSpace(false);
+  if (!(e.target instanceof Element && e.target.closest('input,textarea,select'))) e.preventDefault();
+});
+window.addEventListener('blur', () => setSpace(false));
+$('zoom').onclick = () => setView(0, 0, W);
 
 $('themeCard').hidden = embedded;
 $('close').hidden = !embedded;

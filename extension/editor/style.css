@@ -141,6 +141,8 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 .drawing-count { gap: 4px; padding: 0 14px; font-size: 12px; }
 .drawing-count .drawing-font-icon { font-size: 16px; }
 .drawing-count-limit { color: var(--over); }
+.drawing-zoom { color: inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.drawing-zoom:hover { opacity: .7; }
 .drawing-color-ring:disabled, .drawing-icon-button:disabled > .drawing-font-icon, .drawing-tool-circle:disabled { opacity: .3; }
 .drawing-color-ring:disabled, .drawing-icon-button:disabled, .drawing-tool-circle:disabled { cursor: default; }
 .drawing-color-ring:not(:disabled):hover, .drawing-icon-button:not(:disabled):hover, .drawing-tool-circle:not(:disabled):hover { opacity: .7; }
@@ -198,6 +200,8 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 #board { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
 #board.erasing { cursor: cell; }
 #board.moving { cursor: move; }
+#board.pan { cursor: grab; }
+#board.panning { cursor: grabbing; }
 #ink path { pointer-events: stroke; }
 .dock { display: flex; margin-top: 8px; }
 

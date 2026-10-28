@@ -12,6 +12,7 @@
     <header class="drawing-header">
       <button class="drawing-icon-button drawing-circle" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
       <div class="drawing-header-trailing">
+        <button class="drawing-count drawing-pill drawing-zoom" id="zoom" title="Fit to screen (0)" hidden></button>
         <span class="drawing-count drawing-pill" id="badge" title="Uses weights or colours outside the standard set" hidden>experimental</span>
         <span class="drawing-count drawing-pill" id="stats" role="status"></span>
         <div class="drawing-pill drawing-history" role="group" aria-label="History">
@@ -129,6 +130,11 @@
             <dt><kbd>O</kbd></dt><dd>ellipse</dd>
             <dt><kbd>E</kbd></dt><dd>eraser</dd>
             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>weight</dd>
+            <dt><kbd>Ctrl</kbd> + wheel</dt><dd>zoom at cursor, also pinch</dd>
+            <dt><kbd>+</kbd> <kbd>-</kbd></dt><dd>zoom</dd>
+            <dt><kbd>0</kbd></dt><dd>fit the page</dd>
+            <dt>wheel</dt><dd>pan, also two fingers</dd>
+            <dt><kbd>Space</kbd> + drag</dt><dd>pan, also middle button</dd>
             <dt><kbd>Ctrl+Z</kbd></dt><dd>undo</dd>
             <dt><kbd>Ctrl+Shift+Z</kbd></dt><dd>redo</dd>
           </dl>
