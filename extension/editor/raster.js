@@ -1,4 +1,4 @@
-import { W, H, LIMITS, nearestBase, rdp } from './sdj.js';
+import { W, H, LIMITS, STROKE_SCALE, nearestBase, rdp } from './sdj.js';
 
 const PAD = 24;
 const TEXT_RENDER_SCALE = 1.5;
@@ -45,28 +45,49 @@ const STRAIGHT_PIECE = 12;
 const STRAIGHT_SHARE = 0.75;
 const STRAIGHT_LENGTH = 1 / 16;
 const STRAIGHT_MARGIN = 2;
+const ART_SIGMA = 1.5;
+const COARSE = 4;
+const ART_COLOURS = 16;
+const ART_SHARE = 0.8;
+const REGION_BITS = 5;
+const REGION_COLOURS = [4, 10];
+const REGION_MIN_AREA = [400, 12];
+const REGION_MERGE_DE = 12;
+const REGION_MIN_SHARE = 0.002;
+const REGION_CLOSE = 1;
+const SLIT_RADIUS = 2;
+const REGION_EDGE_SLOPE = 2;
+const KMEANS_ROUNDS = 10;
+const REGION_EDGE_DE = 15;
+const SLIM_OWN_SHARE = 0.2;
+const LINE_MIN_RADIUS = 3;
+const LINE_SIGMA = 0.8;
+const LINE_CONTRAST = [15, 5];
+const LIGHT_LINE_CONTRAST = 40;
+const LIGHT_LINE_INHIBIT = 2;
 
 function thin(img, w, h) {
   const del = [];
-  let changed = true;
+  let changed = true, set = [];
+  for (let i = 0; i < img.length; i++) if (img[i]) set.push(i);
   const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? 0 : img[y * w + x];
   while (changed) {
     changed = false;
     for (let pass = 0; pass < 2; pass++) {
       del.length = 0;
-      for (let y = 0; y < h; y++)
-        for (let x = 0; x < w; x++) {
-          if (!img[y * w + x]) continue;
-          const p = [at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1),
-            at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1)];
-          const b = p.reduce((a, v) => a + v, 0);
-          if (b < 2 || b > 6) continue;
-          let a = 0;
-          for (let i = 0; i < 8; i++) if (!p[i] && p[(i + 1) % 8]) a++;
-          if (a !== 1) continue;
-          if (pass === 0 ? (p[0] * p[2] * p[4] || p[2] * p[4] * p[6]) : (p[0] * p[2] * p[6] || p[0] * p[4] * p[6])) continue;
-          del.push(y * w + x);
-        }
+      set = set.filter(i => img[i]);
+      for (const i of set) {
+        const x = i % w, y = (i - x) / w;
+        const p = [at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1),
+          at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1)];
+        const b = p.reduce((a, v) => a + v, 0);
+        if (b < 2 || b > 6) continue;
+        let a = 0;
+        for (let k = 0; k < 8; k++) if (!p[k] && p[(k + 1) % 8]) a++;
+        if (a !== 1) continue;
+        if (pass === 0 ? (p[0] * p[2] * p[4] || p[2] * p[4] * p[6]) : (p[0] * p[2] * p[6] || p[0] * p[4] * p[6])) continue;
+        del.push(i);
+      }
       for (const i of del) img[i] = 0;
       if (del.length) changed = true;
     }
@@ -757,6 +778,246 @@ function withinBudget(strokes, minLength, high, maxStrokes) {
   return out;
 }
 
+/** Colour channels with alpha over white. @param {Uint8ClampedArray} data @param {number} n */
+function overWhite(data, n) {
+  const out = [0, 1, 2].map(() => new Float32Array(n));
+  for (let i = 0; i < n; i++) {
+    const a = data[i * 4 + 3] / 255;
+    for (let c = 0; c < 3; c++) out[c][i] = 255 - a * (255 - data[i * 4 + c]);
+  }
+  return out;
+}
+
+const blurredColour = (/** @type {Uint8ClampedArray} */ data, /** @type {number} */ w, /** @type {number} */ h) => overWhite(data, w * h).map(c => gaussian(c, w, h, ART_SIGMA));
+
+/** gaussian on a grid COARSE times coarser, read back bilinearly. @param {Float32Array} a @param {number} w @param {number} h @param {number} sigma */
+function coarseGaussian(a, w, h, sigma) {
+  const sw = Math.ceil(w / COARSE), sh = Math.ceil(h / COARSE), small = new Float32Array(sw * sh), count = new Float32Array(sw * sh);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const j = Math.floor(y / COARSE) * sw + Math.floor(x / COARSE);
+      small[j] += a[y * w + x];
+      count[j]++;
+    }
+  const blurred = gaussian(small.map((v, j) => v / count[j]), sw, sh, sigma / COARSE), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) out[y * w + x] = bilinear(blurred, sw, sh, (x + 0.5) / COARSE - 0.5, (y + 0.5) / COARSE - 0.5);
+  return out;
+}
+
+/**
+ * Drawn or flat art rather than a photo: once noise is blurred away, a few colours cover nearly the whole picture,
+ * where a photo spreads over many shades.
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h
+ */
+export function isDrawnArt(data, w, h, [r, g, b] = blurredColour(data, w, h)) {
+  const n = w * h, bins = new Uint32Array(4096);
+  for (let i = 0; i < n; i++) bins[(r[i] >> 4) << 8 | (g[i] >> 4) << 4 | b[i] >> 4]++;
+  const top = bins.sort().subarray(bins.length - ART_COLOURS).reduce((a, v) => a + v, 0);
+  return top >= ART_SHARE * n;
+}
+
+const toLinear = (/** @type {number} */ c) => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const labF = (/** @type {number} */ t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+
+/** CIE Lab under D65. @param {number} r @param {number} g @param {number} b */
+function toLab(r, g, b) {
+  const R = toLinear(r), G = toLinear(g), B = toLinear(b);
+  const x = labF((0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047), y = labF(0.2126 * R + 0.7152 * G + 0.0722 * B), z = labF((0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+
+const dist2 = (/** @type {number[]} */ a, /** @type {number[]} */ b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+
+// k-means in Lab over the colour histogram, seeded greedily where count times squared distance is largest (k-means++
+// without the dice), then clusters closer than REGION_MERGE_DE merge and clusters too rare to be a region fold away
+function palette(colours, counts, k, total) {
+  const nearest = (/** @type {number[]} */ c, /** @type {number[][]} */ centres) => {
+    let best = 0, d = Infinity;
+    centres.forEach((m, j) => { const e = dist2(c, m); if (e < d) { d = e; best = j; } });
+    return best;
+  };
+  let centres = [colours[counts.indexOf(Math.max(...counts))]];
+  while (centres.length < k) {
+    let best = -1, score = 0;
+    colours.forEach((c, i) => { const s = counts[i] * Math.min(...centres.map(m => dist2(c, m))); if (s > score) { score = s; best = i; } });
+    if (best < 0) break;
+    centres.push(colours[best]);
+  }
+  const settle = () => {
+    for (let round = 0; round < KMEANS_ROUNDS; round++) {
+      const sum = centres.map(() => [0, 0, 0, 0]);
+      colours.forEach((c, i) => { const s = sum[nearest(c, centres)]; for (let a = 0; a < 3; a++) s[a] += c[a] * counts[i]; s[3] += counts[i]; });
+      centres = sum.filter(s => s[3]).map(s => [s[0] / s[3], s[1] / s[3], s[2] / s[3], s[3]]);
+    }
+  };
+  settle();
+  for (;;) {
+    let pair = /** @type {number[] | null} */ (null), d = REGION_MERGE_DE ** 2;
+    for (let i = 0; i < centres.length; i++)
+      for (let j = i + 1; j < centres.length; j++) if (dist2(centres[i], centres[j]) < d) { d = dist2(centres[i], centres[j]); pair = [i, j]; }
+    const rare = centres.findIndex(c => c[3] < REGION_MIN_SHARE * total);
+    if (!pair && (rare < 0 || centres.length < 2)) break;
+    if (pair) centres.splice(pair[1], 1);
+    else centres.splice(rare, 1);
+    settle();
+  }
+  return { centres, nearest: (/** @type {number[]} */ c) => nearest(c, centres) };
+}
+
+/** 4-connected pieces of equal value, -1 is never a piece. @param {Int32Array} labels @param {number} w @param {number} h */
+function pieces(labels, w, h) {
+  const id = new Int32Array(w * h).fill(-1), area = [], stack = [];
+  for (let s = 0; s < id.length; s++) {
+    if (id[s] >= 0 || labels[s] < 0) continue;
+    const p = area.length;
+    let n = 0;
+    id[s] = p; stack.push(s);
+    while (stack.length) {
+      const i = /** @type {number} */ (stack.pop()), x = i % w;
+      n++;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w])
+        if (j >= 0 && j < id.length && id[j] < 0 && labels[j] === labels[i]) { id[j] = p; stack.push(j); }
+    }
+    area.push(n);
+  }
+  return { id, area };
+}
+
+// Grey dilation (max) or erosion (min) over a square, van Herk and Gil-Werman: running extremes in blocks of the window
+// size, so the cost does not grow with the radius
+function extremum(src, w, h, r, max) {
+  const size = 2 * r + 1, sign = max ? 1 : -1;
+  const pass = (/** @type {Float32Array} */ a, /** @type {number} */ lines, /** @type {number} */ len, /** @type {number} */ step, /** @type {number} */ stride) => {
+    const out = new Float32Array(w * h), m = len + 2 * r, line = new Float32Array(m), fwd = new Float32Array(m), back = new Float32Array(m);
+    for (let l = 0; l < lines; l++) {
+      line.fill(-Infinity);
+      for (let k = 0, j = l * stride; k < len; k++, j += step) line[k + r] = sign * a[j];
+      for (let k = 0, c = 0; k < m; k++, c = c === size - 1 ? 0 : c + 1) fwd[k] = c && fwd[k - 1] > line[k] ? fwd[k - 1] : line[k];
+      back[m - 1] = line[m - 1];
+      for (let k = m - 2; k >= 0; k--) back[k] = (k + 1) % size && back[k + 1] > line[k] ? back[k + 1] : line[k];
+      for (let k = 0, j = l * stride; k < len; k++, j += step) out[j] = sign * (back[k] > fwd[k + 2 * r] ? back[k] : fwd[k + 2 * r]);
+    }
+    return out;
+  };
+  return pass(pass(src, h, w, 1, w), w, h, w, 1);
+}
+
+/** Grows the labelled pixels into the holes marked -1, nearest first. @param {Int32Array} labels @param {number} w */
+function refill(labels, w) {
+  let front = [];
+  for (let i = 0; i < labels.length; i++) if (labels[i] < 0) front.push(i);
+  while (front.length) {
+    const next = [], grown = [];
+    for (const i of front) {
+      const x = i % w;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w])
+        if (j >= 0 && j < labels.length && labels[j] >= 0) { grown.push(i, labels[j]); break; }
+    }
+    if (!grown.length) break;
+    for (let k = 0; k < grown.length; k += 2) labels[grown[k]] = grown[k + 1];
+    for (const i of front) if (labels[i] < 0) next.push(i);
+    front = next;
+  }
+}
+
+/**
+ * Line art of drawn or flat art, the way Potrace and Illustrator Image Trace work: the colours are quantised to a
+ * palette, each colour area is cleaned (lighter slits inside a darker area close, specks below minArea and slivers
+ * between two other areas join their surroundings) and every border between two areas becomes one line. Lines
+ * narrower than 2 * radius + 1 are found first by morphological top-hat (darker than the grey closing by lineContrast,
+ * or lighter than the grey opening where few others crowd around) and drawn by their centre line.
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h @param {Float32Array[]} blurred colour channels
+ * @param {{ colours: number, minArea: number, radius: number, lineContrast: number }} opts
+ */
+function regionStrokes(data, w, h, blurred, opts) {
+  const { colours, minArea, radius, lineContrast } = opts;
+  const n = w * h, rgb = overWhite(data, n), shift = 8 - REGION_BITS;
+  const bin = new Int32Array(n), counts = new Map();
+  for (let i = 0; i < n; i++) {
+    const b = (rgb[0][i] >> shift) << (2 * REGION_BITS) | (rgb[1][i] >> shift) << REGION_BITS | rgb[2][i] >> shift;
+    bin[i] = b;
+    counts.set(b, (counts.get(b) || 0) + 1);
+  }
+  const keys = [...counts.keys()], half = 1 << (shift - 1), low = (1 << REGION_BITS) - 1;
+  const lab = keys.map(b => toLab(((b >> (2 * REGION_BITS)) << shift) + half, (((b >> REGION_BITS) & low) << shift) + half, ((b & low) << shift) + half));
+  const { centres, nearest } = palette(lab, keys.map(b => counts.get(b)), colours, n);
+  const slot = new Map(keys.map((b, j) => [b, j])), of = lab.map(nearest);
+  const labels = Int32Array.from(bin, b => of[/** @type {number} */ (slot.get(b))]);
+  const raw = Float32Array.from(bin, b => lab[/** @type {number} */ (slot.get(b))][0]);
+  const lightness = gaussian(raw, w, h, LINE_SIGMA);
+  const slitless = gaussian(extremum(extremum(raw, w, h, SLIT_RADIUS, false), w, h, SLIT_RADIUS, true), w, h, LINE_SIGMA);
+  const dark = extremum(extremum(slitless, w, h, radius, true), w, h, radius, false);
+  const light = extremum(extremum(lightness, w, h, radius, false), w, h, radius, true);
+  const above = lightness.map((v, i) => v - light[i]), crowd = coarseGaussian(above, w, h, INHIBIT_SIGMA);
+  const line = new Uint8Array(n), lineStrength = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const below = dark[i] - slitless[i], lit = above[i] - LIGHT_LINE_INHIBIT * crowd[i];
+    if (below >= lineContrast || lit >= LIGHT_LINE_CONTRAST) { line[i] = 1; lineStrength[i] = Math.max(below, lit); labels[i] = -1; }
+  }
+  refill(labels, w);
+  const k = centres.length, byLightness = [...centres.keys()].sort((a, b) => centres[a][0] - centres[b][0]);
+  const maskOf = (/** @type {number} */ c) => {
+    const mask = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (labels[i] === c) mask[i] = 1;
+    return mask;
+  };
+  const rankOf = new Int32Array(k);
+  byLightness.forEach((c, rank) => { rankOf[c] = rank; });
+  for (const c of byLightness) {
+    const closed = erode(dilate(maskOf(c), w, h, REGION_CLOSE), w, h, REGION_CLOSE);
+    for (let i = 0; i < n; i++) if (closed[i] && rankOf[labels[i]] > rankOf[c]) labels[i] = c;
+  }
+  const dropSpecks = () => {
+    const { id, area } = pieces(labels, w, h);
+    for (let i = 0; i < n; i++) if (area[id[i]] < minArea) labels[i] = -1;
+    refill(labels, w);
+  };
+  dropSpecks();
+  const slim = new Uint8Array(n);
+  for (let c = 0; c < k; c++) {
+    const mask = maskOf(c), open = dilate(erode(mask, w, h, radius), w, h, radius);
+    for (let i = 0; i < n; i++) if (mask[i] && !open[i]) slim[i] = 1;
+  }
+  const slimLabels = Int32Array.from(labels, (v, i) => slim[i] ? v : -1);
+  const { id, area } = pieces(slimLabels, w, h), touch = new Float32Array(area.length * (k + 1));
+  for (let i = 0; i < n; i++) {
+    if (!slim[i]) continue;
+    const x = i % w;
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w])
+      if (j >= 0 && j < n && !slim[j]) touch[id[i] * (k + 1) + (labels[j] === labels[i] ? k : labels[j])]++;
+  }
+  const own = area.map((_, p) => {
+    const t = touch.subarray(p * (k + 1), (p + 1) * (k + 1));
+    return t[k] >= SLIM_OWN_SHARE * t.reduce((a, v) => a + v, 0);
+  });
+  for (let i = 0; i < n; i++) if (slim[i] && !own[id[i]]) labels[i] = -1;
+  refill(labels, w);
+  dropSpecks();
+  const [r, g, b] = blurred, contrast = centres.flatMap(p => centres.map(q => Math.sqrt(dist2(p, q))));
+  const edge = new Uint8Array(n), edgeStrength = new Float32Array(n);
+  const mark = (/** @type {number} */ i, /** @type {number} */ j) => {
+    if (labels[j] === labels[i]) return;
+    const de = contrast[labels[i] * k + labels[j]];
+    if (de < REGION_EDGE_DE || Math.max(Math.abs(r[j] - r[i]), Math.abs(g[j] - g[i]), Math.abs(b[j] - b[i])) < REGION_EDGE_SLOPE) return;
+    edge[i] = edge[j] = 1;
+    edgeStrength[i] = Math.max(edgeStrength[i], de);
+    edgeStrength[j] = Math.max(edgeStrength[j], de);
+  };
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (x < w - 1) mark(y * w + x, y * w + x + 1);
+      if (y < h - 1) mark(y * w + x, y * w + x + w);
+    }
+  const strokes = [];
+  for (const [mask, strength] of [[edge, edgeStrength], [line, lineStrength]]) {
+    thin(mask, w, h);
+    dropCornerPixels(mask, w, h);
+    strokes.push(...linkStrokes({ mask, strength }, w, h));
+  }
+  return strokes;
+}
+
 const IDENTITY = [1, 0, 0, 1, 0, 0];
 const applyMatrix = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 
@@ -770,7 +1031,8 @@ function clipSegment([ax, ay], [bx, by]) {
     if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
     if (t0 > t1) return null;
   }
-  return [[ax + t0 * dx, ay + t0 * dy], [ax + t1 * dx, ay + t1 * dy], t1 < 1];
+  const at = (/** @type {number} */ t) => [Math.min(W, Math.max(0, ax + t * dx)), Math.min(H, Math.max(0, ay + t * dy))];
+  return [at(t0), at(t1), t1 < 1];
 }
 
 /** Pieces of a polyline that lie on the canvas, cut where it crosses the edge. @param {number[][]} pts @returns {number[][][]} */
@@ -842,12 +1104,10 @@ export function centerlines(mask, w, h) {
  */
 
 /**
- * Line art for the crop of a photo, in canvas units; lines that leave the canvas are cut at its edge.
- * @param {Uint8ClampedArray} data RGBA of the crop at the trace size @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {PhotoOptions} opts
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h
+ * @param {{ mode: string, detail: number, focus: number[] | null, seeds: number[] }} opts
  */
-export function traceCrop(data, { w, h, toCanvas, enlarged }, {
-  mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, focus = null, seeds = [1, WEAK_RATIO],
-}) {
+function photoStrokes(data, w, h, { mode, detail, focus, seeds }) {
   const g = grayscale(data, w, h);
   stretchLevels(g);
   const found = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail, data);
@@ -863,7 +1123,27 @@ export function traceCrop(data, { w, h, toCanvas, enlarged }, {
   dropCornerPixels(lines.mask, w, h);
   const linked = linkStrokes(lines, w, h);
   if (focus) linked.push(...straightEdges(raw, lines.mask, w, h, thresholds));
-  const strokes = drawingOrder(withinBudget(linked, minLength / enlarged, lines.high, maxStrokes)
+  return { linked, high };
+}
+
+/**
+ * Line art for the crop of a photo, in canvas units; lines that leave the canvas are cut at its edge.
+ * @param {Uint8ClampedArray} data RGBA of the crop at the trace size @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {PhotoOptions} opts
+ */
+export function traceCrop(data, { w, h, toCanvas, enlarged }, {
+  mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, focus = null, seeds = [1, WEAK_RATIO],
+}) {
+  const pen = STROKE_SCALE * weight / Math.sqrt(Math.abs(toCanvas[0] * toCanvas[3] - toCanvas[1] * toCanvas[2]));
+  const blurred = blurredColour(data, w, h);
+  const { linked, high } = isDrawnArt(data, w, h, blurred)
+    ? {
+      linked: regionStrokes(data, w, h, blurred, {
+        colours: Math.round(byDetail(REGION_COLOURS, detail)), minArea: byDetail(REGION_MIN_AREA, detail) / enlarged ** 2, radius: Math.max(LINE_MIN_RADIUS, Math.round(pen)), lineContrast: byDetail(LINE_CONTRAST, detail),
+      }),
+      high: REGION_MERGE_DE / WEAK_STROKE_FACTOR,
+    }
+    : photoStrokes(data, w, h, { mode, detail, focus, seeds });
+  const strokes = drawingOrder(withinBudget(linked, minLength / enlarged, high, maxStrokes)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
   return strokes.flatMap(({ pts, closed }) => {
     const ink = photoColors ? nearestBase((closed && insideColour(data, w, h, pts)) || inkColour(data, w, h, pts)) : color;

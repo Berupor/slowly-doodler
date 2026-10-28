@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow, inhibitTexture } from '../extension/editor/raster.js';
+import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow, inhibitTexture, isDrawnArt } from '../extension/editor/raster.js';
 import { W as CW, H as CH, LIMITS } from '../extension/editor/sdj.js';
 
 const W = 120, H = 120;
@@ -229,6 +229,59 @@ describe('photo flat colour', () => {
         const deep = (/** @type {number} */ x, /** @type {number} */ y) => [[-8, 0], [8, 0], [0, -8], [0, 8]].every(([dx, dy]) => inside(x + dx, y + dy));
         assert.ok(!on[0].some(([x, y]) => deep(x, y)), `a stroke runs inside the ${shape}`);
       }
+    });
+});
+
+describe('drawn art', () => {
+  const PAPER = [250, 249, 245];
+  const trace = (/** @type {(x: number, y: number) => number[]} */ colourAt, /** @type {object} */ preset, size = 400) => {
+    const crop = placementCrop(size, size);
+    assert.ok(crop);
+    const data = paint(crop, colourAt);
+    return { data, crop, lines: traceCrop(data, crop, { ...preset, color: 'black', weight: 1 }).map(l => l.pts.map(p => toSource(crop, p))) };
+  };
+  const near = (/** @type {number[][][]} */ lines, /** @type {number[]} */ [x, y], /** @type {number} */ d) =>
+    lines.filter(pts => pts.some((p, i) => i > 0 && distToSegment(x, y, pts[i - 1], p) < d));
+
+  it('tells flat art from a photo', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    const flat = paint(crop, (x, y) => Math.hypot(x - 200, y - 200) < 90 ? [43, 43, 43] : x > 300 && y < 100 ? [47, 109, 181] : PAPER);
+    const rnd = noise(3);
+    const photo = paint(crop, (x, y) => [255 * x / 400 + 80 * rnd(), 255 * y / 400 + 80 * rnd(), 140 + 60 * Math.sin(x / 40) + 80 * rnd()]);
+    assert.equal(isDrawnArt(flat, crop.w, crop.h), true);
+    assert.equal(isDrawnArt(photo, crop.w, crop.h), false);
+  });
+
+  for (const [name, preset] of Object.entries(PRESETS))
+    it(`draws the border of two touching shapes once, ${name}`, () => {
+      const { lines } = trace((x, y) => y > 120 && y < 280 ? x > 80 && x < 200 ? [229, 57, 53] : x >= 200 && x < 320 ? [30, 136, 229] : PAPER : PAPER, preset);
+      for (let y = 140; y <= 260; y += 10) assert.equal(near(lines, [200, y], 3).length, 1, `${near(lines, [200, y], 3).length} strokes on the shared border at y ${y}`);
+    });
+
+  it('outlines a speckled black mass once and draws nothing inside, detailed', () => {
+    const rnd = noise(11), streaks = Array.from({ length: 500 }, () => [200 + 250 * rnd(), 200 + 250 * rnd(), 8 + 20 * (rnd() + 0.5), 40 + 50 * (rnd() + 0.5)]);
+    const body = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 200, y - 200) < 120;
+    const { lines } = trace((x, y) => {
+      if (!body(x, y)) return PAPER;
+      const lit = streaks.find(([sx, sy, len]) => Math.abs(x - sx) < 0.6 && y > sy && y < sy + len);
+      const v = lit ? lit[3] : 4 + 16 * (rnd() + 0.5);
+      return [v, v, v];
+    }, DETAILED);
+    const on = lines.filter(pts => pts.some(([x, y]) => Math.abs(Math.hypot(x - 200, y - 200) - 120) < 4));
+    assert.equal(on.length, 1, `${on.length} strokes on the rim ${JSON.stringify(on.map(p => [p.length, Math.round(length(p)), p[0].map(Math.round)]))}`);
+    assert.ok(length(on[0]) > 0.9 * 2 * Math.PI * 120, `${Math.round(length(on[0]))} of the rim traced`);
+    const inside = lines.filter(pts => pts.some(([x, y]) => Math.hypot(x - 200, y - 200) < 110));
+    assert.equal(inside.length, 0, `${inside.length} marks inside the mass ${JSON.stringify(inside.map(p => p.map(q => q.map(Math.round))))}`);
+  });
+
+  for (const [name, preset] of Object.entries(PRESETS))
+    it(`draws a 3px line as one centre stroke, ${name}`, () => {
+      const a = [80, 90], b = [320, 300];
+      const { lines } = trace((x, y) => distToSegment(x, y, a, b) < 1.5 ? [30, 30, 30] : PAPER, preset);
+      assert.equal(lines.length, 1, `${lines.length} strokes`);
+      for (const [x, y] of lines[0]) assert.ok(distToSegment(x, y, a, b) < 1.5, `${x} ${y} is off the centre`);
+      assert.ok(length(lines[0]) > 0.9 * Math.hypot(b[0] - a[0], b[1] - a[1]), `${Math.round(length(lines[0]))} traced`);
     });
 });
 
