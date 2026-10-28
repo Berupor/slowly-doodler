@@ -394,7 +394,7 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
   sanitize(src);
   expandUses(src);
   const host = /** @type {SVGSVGElement} */ (document.importNode(src, true));
-  host.style.cssText = 'position:absolute;left:-99999px;top:0;pointer-events:none';
+  host.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:visible;pointer-events:none';
   document.body.appendChild(host);
   const tick = yielder(onProgress);
   try {

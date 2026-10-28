@@ -1021,6 +1021,12 @@ with sync_playwright() as p:
           ([l['name'] for l in layers()], active()))
     page.keyboard.press('Control+z')
     check('undo removes the Remix layer', [l['name'] for l in layers()] == ['Layer 1', 'shapes', 'Hi'])
+    check('an SVG import still finds its shapes while the page waits for Slowly styles (body hidden)', page.evaluate('''async (svg) => {
+      document.documentElement.classList.remove('styled');
+      try { return (await __doodler.importSvg(svg, { remix: true })).polylines.length > 0; }
+      catch { return false; }
+      finally { document.documentElement.classList.add('styled'); }
+    }''', SVG))
     for _ in range(7): act('#layerAdd')
     check('+ is disabled at 10 layers', len(layers()) == 10 and page.locator('#layerAdd').is_disabled())
     act('#layerAdd', 'click', force=True)
