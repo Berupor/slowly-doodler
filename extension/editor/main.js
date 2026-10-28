@@ -26,11 +26,14 @@ const WHEEL_ZOOM = 0.01;
 const WHEEL_CAP = 30;
 const LINE_PX = 33;
 const ESC_AFTER_FULLSCREEN_MS = 500;
-/** @type {Record<string, { detail: number, weight: number, mode: string, fills: string }>} detail and weight seed the import bar sliders, mode is the photo line detector */
+/**
+ * detail and weight seed the import bar sliders; mode, focus and seeds go to the photo tracer (see PhotoOptions in raster.js)
+ * @type {Record<string, { detail: number, weight: number, mode: string, fills: string, focus?: number[], seeds?: number[] }>}
+ */
 const IMPORT_PRESETS = {
-  outline: { detail: 15, weight: 3, mode: 'edges', fills: 'outline' },
+  outline: { detail: 15, weight: 3, mode: 'edges', fills: 'outline', focus: [0.6, 1.6] },
   sketch: { detail: 35, weight: 1, mode: 'sketch', fills: 'outline' },
-  detailed: { detail: 60, weight: 1, mode: 'edges', fills: 'hatch' },
+  detailed: { detail: 60, weight: 1, mode: 'edges', fills: 'hatch', focus: [0.25, 1.3], seeds: [2, 0.3] },
   scan: { detail: 50, weight: 3, mode: 'dark', fills: 'outline' },
 };
 const PHOTO_DETAIL_SCALE = 2;
@@ -862,6 +865,7 @@ async function trace(p, onProgress) {
     polylines: photoToPolylines(/** @type {ImageBitmap} */ (p.source), {
       mode: preset.mode, detail: PHOTO_DETAIL_SCALE * detail, maxStrokes: PHOTO_STROKES_BASE + PHOTO_STROKES_PER_DETAIL * detail,
       minLength: Math.max(PHOTO_MIN_LENGTH[1], PHOTO_MIN_LENGTH[0] - detail * PHOTO_MIN_LENGTH_DROP), color, weight: w, photoColors: colors !== 'one', place: p.m,
+      focus: preset.focus, seeds: preset.seeds,
     }),
   };
   return { polylines: textToPolylines($('text').value.trim(), { font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight: w }) };

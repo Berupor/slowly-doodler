@@ -27,6 +27,12 @@ const BILATERAL_RADIUS = 3;
 const BILATERAL_SIGMA_S = 2;
 const BILATERAL_SIGMA_R = 18;
 const CROP_MARGIN = 12;
+const CHROMA_SPREAD = 1.5;
+const SALIENCY_STEP = 4;
+const SALIENCY_SPREAD = 0.03;
+const SALIENCY_TOP = 0.98;
+const SALIENCY_GAMMA = 1.5;
+const CENTRE_SIGMA = 0.32;
 
 function thin(img, w, h) {
   const del = [];
@@ -173,6 +179,43 @@ function flattenTexture(g, w, h) {
   return out;
 }
 
+/**
+ * Where the subject probably is, 0 to 1 per pixel: frequency-tuned saliency (Achanta et al. 2009, how far the blurred
+ * colour is from the mean colour of the image) spread over the region and multiplied by a centre prior. Computed on a
+ * grid SALIENCY_STEP times coarser and read back bilinearly.
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h
+ */
+function importance(data, w, h) {
+  const f = SALIENCY_STEP, sw = Math.ceil(w / f), sh = Math.ceil(h / f), n = sw * sh;
+  const rgb = [0, 1, 2].map(() => new Float32Array(n)), count = new Float32Array(n);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const j = Math.floor(y / f) * sw + Math.floor(x / f), i = (y * w + x) * 4, a = data[i + 3] / 255;
+      for (let c = 0; c < 3; c++) rgb[c][j] += 255 - a * (255 - data[i + c]);
+      count[j]++;
+    }
+  for (const ch of rgb) for (let j = 0; j < n; j++) ch[j] /= count[j];
+  const mean = rgb.map(ch => ch.reduce((a, v) => a + v, 0) / n);
+  const far = new Float32Array(n);
+  for (let j = 0; j < n; j++) far[j] = Math.hypot(rgb[0][j] - mean[0], rgb[1][j] - mean[1], rgb[2][j] - mean[2]);
+  const sal = gaussian(far, sw, sh, Math.hypot(sw, sh) * SALIENCY_SPREAD);
+  const top = [...sal].sort((a, b) => a - b)[Math.floor(n * SALIENCY_TOP)] || 1;
+  for (let y = 0; y < sh; y++)
+    for (let x = 0; x < sw; x++) {
+      const dx = (x + 0.5) / sw - 0.5, dy = (y + 0.5) / sh - 0.5;
+      sal[y * sw + x] = Math.min(1, sal[y * sw + x] / top) ** SALIENCY_GAMMA * Math.exp(-(dx * dx + dy * dy) / (2 * CENTRE_SIGMA * CENTRE_SIGMA));
+    }
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / f - 0.5)), y0 = Math.floor(fy), y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const fx = Math.min(sw - 1, Math.max(0, (x + 0.5) / f - 0.5)), x0 = Math.floor(fx), x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+      out[y * w + x] = (sal[y0 * sw + x0] * (1 - tx) + sal[y0 * sw + x1] * tx) * (1 - ty) + (sal[y1 * sw + x0] * (1 - tx) + sal[y1 * sw + x1] * tx) * ty;
+    }
+  }
+  return out;
+}
+
 /** @param {number[]} range @param {number} detail */
 const byDetail = ([hi, lo], detail) => hi * (lo / hi) ** (detail / 100);
 
@@ -192,19 +235,40 @@ function hysteresis(strength, w, h, [low, high]) {
   return mask;
 }
 
-const detected = (strength, w, h, high) =>
-  ({ mask: hysteresis(strength, w, h, [high * WEAK_RATIO, high]), strength, high });
+/** Opponent colour channels red-green and yellow-blue, alpha over white. @param {Uint8ClampedArray} data @param {number} n */
+function opponents(data, n) {
+  const rg = new Float32Array(n), yb = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = data[i * 4 + 3] / 255;
+    const r = 255 - a * (255 - data[i * 4]), g = 255 - a * (255 - data[i * 4 + 1]), b = 255 - a * (255 - data[i * 4 + 2]);
+    rg[i] = r - g;
+    yb[i] = (r + g) / 2 - b;
+  }
+  return [rg, yb];
+}
 
-// Canny edge detector (J. Canny 1986): Gaussian, Sobel gradient, non-maximum suppression, hysteresis
-function cannyEdges(g, w, h, detail) {
-  const s = gaussian(g, w, h, byDetail(CANNY_SIGMAS, detail));
+// Canny edge detector (J. Canny 1986) on colour: the gradient is the largest eigenvalue of the Di Zenzo structure tensor
+// (Di Zenzo 1986) summed over the filtered luminance and blurred opponent channels, so a gold dog on green leaves of the
+// same brightness still has an edge. Then non-maximum suppression; hysteresis is left to the caller.
+function cannyEdges(g, w, h, detail, data) {
+  const sigma = byDetail(CANNY_SIGMAS, detail);
+  const s = gaussian(g, w, h, sigma);
+  const colour = opponents(data, w * h).map(c => gaussian(c, w, h, sigma * CHROMA_SPREAD));
   const mag = new Float32Array(w * h), dir = new Uint8Array(w * h);
+  const sobel = (/** @type {Float32Array} */ a, /** @type {number} */ i) => [
+    (a[i - w + 1] + 2 * a[i + 1] + a[i + w + 1] - a[i - w - 1] - 2 * a[i - 1] - a[i + w - 1]) / 8,
+    (a[i + w - 1] + 2 * a[i + w] + a[i + w + 1] - a[i - w - 1] - 2 * a[i - w] - a[i - w + 1]) / 8];
   for (let y = 1; y < h - 1; y++)
     for (let x = 1; x < w - 1; x++) {
       const i = y * w + x;
-      const gx = (s[i - w + 1] + 2 * s[i + 1] + s[i + w + 1] - s[i - w - 1] - 2 * s[i - 1] - s[i + w - 1]) / 8;
-      const gy = (s[i + w - 1] + 2 * s[i + w] + s[i + w + 1] - s[i - w - 1] - 2 * s[i - w] - s[i - w + 1]) / 8;
-      mag[i] = Math.hypot(gx, gy);
+      const [lx, ly] = sobel(s, i);
+      let xx = lx * lx, xy = lx * ly, yy = ly * ly;
+      for (const c of colour) {
+        const [cx, cy] = sobel(c, i);
+        xx += cx * cx; xy += cx * cy; yy += cy * cy;
+      }
+      mag[i] = Math.sqrt((xx + yy + Math.hypot(xx - yy, 2 * xy)) / 2);
+      const angle = Math.atan2(2 * xy, xx - yy) / 2, gx = Math.cos(angle), gy = Math.sin(angle);
       const ax = Math.abs(gx), ay = Math.abs(gy);
       dir[i] = ay <= 0.4142 * ax ? 0 : ay >= 2.4142 * ax ? 2 : gx * gy > 0 ? 1 : 3;
     }
@@ -220,7 +284,7 @@ function cannyEdges(g, w, h, detail) {
       shift[2 * i] = t * step[dir[i]][0];
       shift[2 * i + 1] = t * step[dir[i]][1];
     }
-  return { ...detected(strength, w, h, byDetail(CANNY_THRESHOLDS, detail)), shift };
+  return { strength, high: byDetail(CANNY_THRESHOLDS, detail), shift };
 }
 
 // Difference of Gaussians line drawing, the thresholded core of XDoG (Winnemoeller et al. 2012, https://doi.org/10.1016/j.cag.2012.03.004)
@@ -229,7 +293,7 @@ function dogLines(g, w, h, detail) {
   const fine = gaussian(g, w, h, sigma), coarse = gaussian(g, w, h, sigma * DOG_RATIO);
   const strength = new Float32Array(w * h);
   for (let i = 0; i < strength.length; i++) strength[i] = Math.max(0, coarse[i] - fine[i]);
-  return detected(strength, w, h, byDetail(DOG_THRESHOLDS, detail));
+  return { strength, high: byDetail(DOG_THRESHOLDS, detail) };
 }
 
 // Adaptive thresholding against the local Gaussian mean (as in OpenCV adaptiveThreshold): dark strokes on lighter ground
@@ -237,7 +301,7 @@ function darkStrokes(g, w, h, detail) {
   const fine = gaussian(g, w, h, 1), local = gaussian(g, w, h, LOCAL_SIGMA);
   const strength = new Float32Array(w * h);
   for (let i = 0; i < strength.length; i++) strength[i] = Math.max(0, local[i] - fine[i]);
-  return detected(strength, w, h, byDetail(LOCAL_THRESHOLDS, detail));
+  return { strength, high: byDetail(LOCAL_THRESHOLDS, detail) };
 }
 
 const DETECTORS = { edges: cannyEdges, sketch: dogLines, dark: darkStrokes };
@@ -599,18 +663,30 @@ export function centerlines(mask, w, h) {
 }
 
 /**
- * @typedef {{ mode?: string, detail?: number, minLength?: number, maxStrokes?: number, color: string, weight: number, photoColors?: boolean, place?: number[] }} PhotoOptions
+ * @typedef {{ mode?: string, detail?: number, minLength?: number, maxStrokes?: number, color: string, weight: number, photoColors?: boolean,
+ *   place?: number[], focus?: number[] | null, seeds?: number[] }} PhotoOptions
  * minLength is in trace pixels of the fitted placement; place is the matrix the user moved and scaled the import by.
+ * focus [background, subject] scales edge strength by the importance map, from the first factor where nothing stands
+ * out to the second on the subject. seeds [factor, weak] scales the hysteresis threshold that starts a line and sets
+ * the fraction of it that continues one.
  */
 
 /**
  * Line art for the crop of a photo, in canvas units; lines that leave the canvas are cut at its edge.
  * @param {Uint8ClampedArray} data RGBA of the crop at the trace size @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {PhotoOptions} opts
  */
-export function traceCrop(data, { w, h, toCanvas, enlarged }, { mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false }) {
+export function traceCrop(data, { w, h, toCanvas, enlarged }, {
+  mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, focus = null, seeds = [1, WEAK_RATIO],
+}) {
   const g = grayscale(data, w, h);
   stretchLevels(g);
-  const lines = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail);
+  const found = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail, data);
+  if (focus) {
+    const weightOf = importance(data, w, h);
+    for (let i = 0; i < found.strength.length; i++) found.strength[i] *= focus[0] + (focus[1] - focus[0]) * weightOf[i];
+  }
+  const high = found.high * seeds[0];
+  const lines = { ...found, high, mask: hysteresis(found.strength, w, h, [high * seeds[1], high]) };
   thin(lines.mask, w, h);
   dropCornerPixels(lines.mask, w, h);
   const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength / enlarged, lines.high, maxStrokes)

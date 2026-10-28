@@ -95,6 +95,23 @@ describe('retrace of an enlarged photo', () => {
   });
 });
 
+describe('photo edges', () => {
+  it('outlines a red square on a green ground of the same brightness', () => {
+    const crop = placementCrop(300, 300);
+    assert.ok(crop);
+    const data = new Uint8ClampedArray(crop.w * crop.h * 4);
+    for (let y = 0; y < crop.h; y++)
+      for (let x = 0; x < crop.w; x++) {
+        const inside = Math.abs(x * 300 / crop.w - 150) < 70 && Math.abs(y * 300 / crop.h - 150) < 70;
+        data.set(inside ? [200, 60, 60, 255] : [40, 145, 40, 255], (y * crop.w + x) * 4);
+      }
+    const lines = traceCrop(data, crop, { color: 'black', weight: 1, detail: 30, minLength: 16 });
+    const total = lines.reduce((a, l) => a + length(l.pts), 0);
+    const side = 140 * crop.toCanvas[0] * crop.w / 300;
+    assert.ok(total > 3 * side, `${total} of ${4 * side} traced`);
+  });
+});
+
 describe('clipToCanvas', () => {
   it('splits a line that leaves and re-enters the canvas at the crossings', () => {
     const pieces = clipToCanvas([[100, 100], [-100, 100], [-100, 200], [100, 200]]);
