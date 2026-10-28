@@ -274,6 +274,27 @@ describe('Ink scan on a photo and on a scan', () => {
   });
 });
 
+describe('photo straight edge', () => {
+  const edgeY = (/** @type {number} */ x) => 120 + 0.35 * x;
+
+  for (const [name, preset] of Object.entries(PRESETS))
+    it(`keeps a long low-contrast edge across a noisy gradient, ${name}`, () => {
+      const crop = placementCrop(600, 400);
+      assert.ok(crop);
+      const rnd = noise(11);
+      const data = paint(crop, (x, y) => {
+        const g = 70 + 90 * x / 600 + 40 * y / 400 + (y > edgeY(x) ? 40 : 0);
+        return [g + 30 * Math.sin(x / 40) + 40 * rnd(), g + 30 * Math.sin(y / 35) + 40 * rnd(), g + 40 * rnd()];
+      });
+      assert.equal(isDrawnArt(data, crop.w, crop.h), false);
+      const lines = traceCrop(data, crop, { ...preset, color: 'black', weight: 1 }).map(l => l.pts.map(p => toSource(crop, p)));
+      let covered = 0, total = 0;
+      for (let x = 30; x < 570; x += 2, total++)
+        if (lines.some(pts => pts.some((p, i) => i > 0 && distToSegment(x, edgeY(x), pts[i - 1], p) < 6))) covered++;
+      assert.ok(covered > 0.9 * total, `${Math.round(100 * covered / total)}% of the edge is traced`);
+    });
+});
+
 describe('drawn art', () => {
   const PAPER = [250, 249, 245];
   const trace = (/** @type {(x: number, y: number) => number[]} */ colourAt, /** @type {object} */ preset, size = 400) => {
