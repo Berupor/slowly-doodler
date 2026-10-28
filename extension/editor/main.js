@@ -304,12 +304,22 @@ function gesturePoints(g) {
 /** @type {(p: S.Point) => S.Point} */
 const clampPoint = ([x, y, t]) => [S.r2(Math.min(W, Math.max(0, x))), S.r2(Math.min(H, Math.max(0, y))), Math.round(t)];
 
+/** @type {WeakMap<Gesture, { key: string, els: SVGPathElement[] }>} */
+const liveOf = new WeakMap();
+
 /** @param {Gesture} g */
 function renderLive(g) {
   const pts = gesturePoints(g);
   const shown = rainbow ? RAINBOW[0] : g.color;
-  live.replaceChildren(...SYMMETRY[symmetry].t.map(tf =>
-    pathEl(pts.map(p => [...tf(p), p[2]]), shown, g.weight)));
+  const copies = SYMMETRY[symmetry].t;
+  const key = `${symmetry}|${shown}`;
+  let state = liveOf.get(g);
+  if (!state || state.key !== key) {
+    state = { key, els: copies.map(() => pathEl([], shown, g.weight)) };
+    liveOf.set(g, state);
+    live.replaceChildren(...state.els);
+  }
+  copies.forEach((tf, i) => state.els[i].setAttribute('d', S.pathD(pts.map(p => [...tf(p), p[2]]))));
 }
 
 /** @param {S.Stroke} stroke @param {number} phase */
@@ -1069,19 +1079,23 @@ function startReplay() {
   const starts = compressedStarts(list);
   const els = list.map(s => pathEl([], s.color, s.weight));
   const shown = new Array(list.length).fill(0);
+  /** @type {((n: number) => string)[]} */
+  const prefixes = [];
   ink.replaceChildren(...els);
   const t0 = performance.now(), speed = Number($('replaySpeed').value);
   const frame = () => {
     const t = (performance.now() - t0) * speed;
-    let done = true;
-    list.forEach((s, i) => {
+    list.forEach(({ points }, i) => {
       const local = t - starts[i];
-      let n = 0;
-      if (local >= 0) while (n < s.points.length && s.points[n][2] <= local) n++;
-      if (n < s.points.length) done = false;
-      if (n !== shown[i]) { shown[i] = n; els[i].setAttribute('d', n ? S.pathD(s.points.slice(0, n)) : ''); }
+      if (shown[i] === points.length || local < 0) return;
+      let n = shown[i];
+      while (n < points.length && points[n][2] <= local) n++;
+      if (n === shown[i]) return;
+      shown[i] = n;
+      prefixes[i] ??= S.pathPrefixes(points);
+      els[i].setAttribute('d', prefixes[i](n));
     });
-    if (done) stopReplay();
+    if (list.every(({ points }, i) => shown[i] === points.length)) stopReplay();
     else replay = requestAnimationFrame(frame);
   };
   replay = requestAnimationFrame(frame);
@@ -1173,12 +1187,31 @@ function renameLayer(l, name) {
   input.select();
 }
 
+/** @typedef {{ strokes: S.Stroke[], dark: boolean, palette: S.Palette, svg: SVGSVGElement }} CachedThumb */
+/** @type {Map<string, CachedThumb>} */
+let layerThumbs = new Map();
+
+/** @param {string} id @param {Map<string, CachedThumb>} kept */
+function layerThumbnail(id, kept) {
+  const own = strokes.filter(s => s.layer === id);
+  const dark = isDark();
+  const hit = layerThumbs.get(id);
+  const fresh = hit && hit.dark === dark && hit.palette === palette
+    && hit.strokes.length === own.length && hit.strokes.every((s, i) => s === own[i]);
+  const entry = fresh ? hit : { strokes: own, dark, palette, svg: thumbnail(S.buildSdj(own, palette)) };
+  entry.svg.setAttribute('class', 'layer-thumb');
+  kept.set(id, entry);
+  return entry.svg;
+}
+
 function renderLayers(opening = false) {
   $('layerAdd').disabled = layers.length >= L.MAX_LAYERS;
   $('layerAdd').title = layers.length >= L.MAX_LAYERS ? `At most ${L.MAX_LAYERS} layers` : 'Add layer';
   $('layerCount').textContent = `${layers.length}/${L.MAX_LAYERS}`;
   $('layersBtn').title = `Layers: ${layers.find(l => l.id === active)?.name}`;
   if (!opening && !$('popLayers').matches(':popover-open')) return;
+  /** @type {Map<string, CachedThumb>} */
+  const kept = new Map();
   $('layerList').replaceChildren(...layers.map((l, i) => {
     const row = document.createElement('div');
     row.className = 'layer-row';
@@ -1191,8 +1224,7 @@ function renderLayers(opening = false) {
     const pickRow = () => { if (active !== l.id) { active = l.id; renderLayers(); } };
     row.onclick = pickRow;
     row.onkeydown = e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pickRow(); } };
-    const thumb = thumbnail(S.buildSdj(strokes.filter(s => s.layer === l.id), palette));
-    thumb.setAttribute('class', 'layer-thumb');
+    const thumb = layerThumbnail(l.id, kept);
     const name = span('layer-name', {}, l.name);
     name.title = 'Double-click to rename';
     name.ondblclick = () => renameLayer(l, name);
@@ -1237,6 +1269,7 @@ function renderLayers(opening = false) {
     }
     return row;
   }).reverse());
+  layerThumbs = kept;
   $('layerList').querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest' });
 }
 

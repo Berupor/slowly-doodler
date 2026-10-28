@@ -49,6 +49,18 @@ export function pathD(points) {
   return d + ` L ${l[0]} ${l[1]}`;
 }
 
+/** @param {number[][]} points @returns {(n: number) => string} path of the first n points, same as pathD(points.slice(0, n)) */
+export function pathPrefixes(points) {
+  const upTo = [`M ${points[0][0]} ${points[0][1]}`];
+  for (let i = 1; i < points.length - 1; i++) {
+    const [x, y] = points[i], [nx, ny] = points[i + 1];
+    upTo.push(`${upTo[i - 1]} Q ${x} ${y} ${(x + nx) / 2} ${(y + ny) / 2}`);
+  }
+  return n => n === 1
+    ? pathD([points[0]])
+    : `${upTo[n - 2]} L ${points[n - 1][0]} ${points[n - 1][1]}`;
+}
+
 /** @param {Stroke[]} strokes */
 export function endTime(strokes) {
   return strokes.reduce((m, s) => Math.max(m, s.startOffset + (s.points[s.points.length - 1][2] || 0)), 0);

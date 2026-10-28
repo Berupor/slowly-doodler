@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, W, H, buildSdj, validate, timed, pathD, nearestBase, hexToRgb, simplifyStrokes, cutStrokes } from '../extension/editor/sdj.js';
+import { LIMITS, W, H, buildSdj, validate, timed, pathD, pathPrefixes, nearestBase, hexToRgb, simplifyStrokes, cutStrokes } from '../extension/editor/sdj.js';
 
 const stroke = (overrides = {}) => ({ color: 'black', weight: 3, startOffset: 0, points: [[0, 0, 0], [10, 10, 50]], ...overrides });
 const sdjOf = (strokes, palette = {}) => buildSdj(strokes, palette);
@@ -201,6 +201,19 @@ describe('pathD', () => {
   it('smooths inner points with quadratic curves through midpoints', () => {
     assert.equal(pathD([[0, 0], [10, 10], [20, 10]]), 'M 0 0 Q 10 10 15 10 L 20 10');
     assert.equal(pathD([[0, 0], [10, 0], [10, 10], [20, 10]]), 'M 0 0 Q 10 0 10 5 Q 10 10 15 10 L 20 10');
+  });
+});
+
+describe('pathPrefixes', () => {
+  const sample = [[0, 0, 0], [10, 3.5, 5], [12, 10, 9], [20.25, 10, 14], [31, 2, 20], [40, 40, 30]];
+
+  it('equals pathD of the first n points for every n, including 1 and 2', () => {
+    const prefix = pathPrefixes(sample);
+    for (let n = 1; n <= sample.length; n++) assert.equal(prefix(n), pathD(sample.slice(0, n)), `n=${n}`);
+  });
+
+  it('handles a one-point stroke', () => {
+    assert.equal(pathPrefixes([[5, 5, 0]])(1), pathD([[5, 5, 0]]));
   });
 });
 
