@@ -2,3 +2,4 @@ node_modules/
 unsynced/
 .claude/
 *.zip
+__pycache__/
