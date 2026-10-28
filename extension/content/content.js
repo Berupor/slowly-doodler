@@ -201,6 +201,7 @@
     const iframe = css(document.createElement('iframe'),
       `width:min(1280px,96vw);height:min(900px,94vh);border:0;border-radius:12px;background:${isDark() ? '#1b1d24' : '#f8f8f8'};`
       + 'box-shadow:0 20px 60px rgba(0,0,0,.35)');
+    iframe.allow = 'fullscreen';
     iframe.src = frameUrl();
     backdrop.appendChild(iframe);
     document.body.appendChild(backdrop);
@@ -218,7 +219,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function escClose(e) { if (e.key === 'Escape') close(); }
+  function escClose(e) { if (e.key === 'Escape' && !document.fullscreenElement) close(); }
 
   /** @param {string} text @param {number} [ms] Infinity keeps the toast until it is removed */
   function toast(text, ms = 7000) {
