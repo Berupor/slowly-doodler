@@ -2,7 +2,7 @@
   const PENDING = 'doodler:pending';
   const SVG_DATA = 'data:image/svg+xml';
   const SAVE_TIMEOUT_MS = 20000;
-  const pageUrl = chrome.runtime.getURL('index.html');
+  const pageUrl = chrome.runtime.getURL('editor/index.html');
   const origin = new URL(pageUrl).origin;
   let overlay = null, frame = null, ready = false, queued = [], nativeClick = false;
 

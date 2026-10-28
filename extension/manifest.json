@@ -13,19 +13,19 @@
   "content_scripts": [
     {
       "matches": ["https://web.slowly.app/*"],
-      "js": ["hook.js"],
+      "js": ["content/hook.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
       "matches": ["https://web.slowly.app/*"],
-      "js": ["friends.js", "content.js"],
+      "js": ["content/friends.js", "content/content.js"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["index.html", "style.css", "js/*"],
+      "resources": ["editor/*"],
       "matches": ["https://web.slowly.app/*"]
     }
   ]
