@@ -47,6 +47,7 @@ body {
 }
 button, select, input, textarea { font: inherit; }
 [hidden] { display: none !important; }
+html:not(.styled) body { visibility: hidden; }
 
 /* Bootstrap 4 subset with Slowly's values; :where() keeps Slowly's own sheet in charge when it is loaded */
 :where(a) { color: var(--primary); text-decoration: none; }

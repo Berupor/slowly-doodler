@@ -16,6 +16,8 @@ const HISTORY_DEPTH = 100;
 const ERASER_PROBE = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]];
 
 const SLOWLY_FONT_CSS = 'https://fonts.googleapis.com/css?family=Open+Sans:400,600,700&display=swap';
+const SLOWLY_FONTS = ['400 14px "Open Sans"', '600 14px "Open Sans"', '20px slowly-icomoon'];
+const STYLE_WAIT_MS = 2500;
 
 const $ = id => document.getElementById(id);
 const board = $('board'), ink = $('ink'), live = $('live'), ref = $('ref');
@@ -23,15 +25,20 @@ const embedded = window.parent !== window;
 const params = new URLSearchParams(location.search);
 const isDark = () => document.documentElement.classList.contains('theme-dark');
 
-function loadSlowlyStyles() {
+async function loadSlowlyStyles() {
   const sheets = params.getAll('css').filter(href => new URL(href, location.href).origin === SLOWLY_ORIGIN);
   if (!sheets.length) return;
   const link = href => Object.assign(document.createElement('link'), { rel: 'stylesheet', href });
-  const slowly = sheets.map(href => Object.assign(link(href), { onload: () => document.documentElement.classList.add('slowly-css') }));
+  const slowly = sheets.map(href => link(href));
+  const loaded = slowly.map(l => new Promise(done => { l.onload = l.onerror = done; }));
   document.head.prepend(link(SLOWLY_FONT_CSS), ...slowly);
+  await Promise.all(loaded);
+  document.documentElement.classList.add('slowly-css');
+  await Promise.all(SLOWLY_FONTS.map(f => document.fonts.load(f).catch(() => {})));
 }
-loadSlowlyStyles();
 document.documentElement.classList.toggle('theme-dark', params.get('theme') === 'dark');
+Promise.race([loadSlowlyStyles(), new Promise(r => setTimeout(r, STYLE_WAIT_MS))])
+  .then(() => document.documentElement.classList.add('styled'));
 $('dark').checked = isDark();
 
 let strokes = [];
