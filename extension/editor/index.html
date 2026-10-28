@@ -28,9 +28,13 @@
         <g id="ref"></g><g id="ink"></g><g id="live"></g>
       </svg>
     </div>
+    <div class="size-rail drawing-pill" title="Brush size ([ and ])">
+      <span class="size-stop" style="--at: 1"></span><span class="size-stop" style="--at: 3"></span><span class="size-stop" style="--at: 6"></span>
+      <input type="range" id="weight" min="0.5" max="8" step="0.5" value="3" aria-label="Brush size">
+      <div class="size-preview drawing-pill" id="weightPreview"><span class="size-dot" id="weightDot"></span><output id="weightOut">3</output></div>
+    </div>
     <div class="dock">
       <div class="drawing-tool-group" id="tools"></div>
-      <div class="drawing-tool-group" id="sizes"></div>
     </div>
     <div class="drawing-color-group"><div class="drawing-colors" id="colors"></div></div>
   </section>
@@ -50,11 +54,6 @@
           <div class="field">
             <label for="symmetry">Symmetry</label>
             <select class="custom-select custom-select-sm" id="symmetry"></select>
-          </div>
-          <div class="field">
-            <label for="weight">Weight</label>
-            <input type="range" class="custom-range" id="weight" min="0.5" max="8" step="0.5" value="3">
-            <output id="weightOut">3</output>
           </div>
           <div class="field">
             <label for="customColor">Colour</label>

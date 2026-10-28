@@ -152,7 +152,31 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 }
 .drawing-tool-circle { width: 34px; height: 34px; margin: 0 4px; border: 2px solid transparent; border-radius: 50%; }
 .drawing-color-ring[aria-pressed=true], .drawing-tool-circle[aria-pressed=true] { border-color: var(--drawing-accent); }
-.drawing-weight-dot { border-radius: 50%; background: var(--drawing-ink); }
+.size-rail {
+  --line: color-mix(in srgb, var(--drawing-ink) 18%, transparent);
+  position: absolute; left: max(16px, calc(50% - min(100vh - 202px, 960px) * 3 / 8 - 60px)); top: 50%; width: 40px; height: 240px; box-sizing: border-box; translate: 0 -50%;
+}
+.size-rail #weight {
+  position: absolute; inset: 14px 0; width: 100%; height: auto; margin: 0; background: transparent; cursor: pointer;
+  appearance: none; writing-mode: vertical-lr; direction: rtl;
+}
+.size-rail #weight::-webkit-slider-runnable-track {
+  width: 24px; margin: 0 auto; background: linear-gradient(to right, transparent 10px, var(--line) 10px 14px, transparent 14px);
+}
+.size-rail #weight::-webkit-slider-thumb {
+  width: 24px; height: 14px; border-radius: 7px; background: var(--drawing-ink); appearance: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+}
+.size-rail #weight:focus-visible { outline: 0; }
+.size-rail #weight:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--drawing-accent); outline-offset: 2px; }
+.size-stop, .size-preview { position: absolute; bottom: calc(21px + var(--f) * (100% - 42px)); translate: 0 50%; pointer-events: none; }
+.size-stop { left: 13px; width: 12px; height: 2px; border-radius: 1px; background: var(--line); }
+.size-preview {
+  left: calc(100% + 10px); height: auto; min-height: 40px; padding: 6px 12px; gap: 10px; white-space: nowrap;
+  opacity: 0; transition: opacity .15s; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.size-rail:hover .size-preview, .size-rail.showing .size-preview { opacity: 1; }
+.size-dot { border-radius: 50%; }
 .drawing-color-group {
   height: 50px; margin: 4px; max-width: calc(100% - 32px); overflow-x: auto; scrollbar-width: none; border-radius: 100px;
   background: var(--drawing-background); border: 1px solid var(--drawing-border);
@@ -165,7 +189,7 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 .layout { height: 100%; display: flex; }
 .stage {
   position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 64px 24px 8px; background: var(--drawing-background); color: var(--drawing-ink);
+  padding: 64px 72px 8px; background: var(--drawing-background); color: var(--drawing-ink);
 }
 .paper {
   height: min(calc(100vh - 202px), 960px); aspect-ratio: 3 / 4; max-width: 100%;
