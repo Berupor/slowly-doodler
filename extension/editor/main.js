@@ -224,7 +224,7 @@ let autosaveFailed = false;
 function changed() {
   renderInk();
   updateStats();
-  writeJson();
+  if ($('advanced').hasAttribute('open')) writeJsonSoon();
   renderLayers();
   clearTimeout(workingTimer);
   workingTimer = setTimeout(() => lib.saveWorking({ ...stored(), customColors }).then(() => { autosaveFailed = false; }, err => {
@@ -250,11 +250,17 @@ const stored = () => ({ sdj: S.buildSdj(strokes, palette), layers: L.pack(stroke
 
 /** @type {WeakMap<S.Stroke, Element>} */
 const elementOf = new WeakMap();
+/** @type {{ dark: boolean, palette: S.Palette, extra: S.Palette | undefined }} */
+let inkLook = { dark: false, palette, extra: undefined };
 function renderInk(list = pending ? [...strokes, ...pending.made] : strokes) {
+  const look = { dark: isDark(), palette, extra: pending?.palette };
+  const reusable = look.dark === inkLook.dark && look.palette === inkLook.palette && look.extra === inkLook.extra;
+  inkLook = look;
   const shown = L.shownIds(layers);
   ink.replaceChildren(...list.map(s => {
-    const el = inkEl(s);
-    if (s.layer !== undefined && !shown.has(s.layer)) el.style.display = 'none';
+    const known = elementOf.get(s);
+    const el = reusable && known?.parentNode === ink ? known : inkEl(s);
+    /** @type {SVGElement} */ (el).style.display = s.layer !== undefined && !shown.has(s.layer) ? 'none' : '';
     return el;
   }));
   selector.refresh();
@@ -802,6 +808,7 @@ function payload() {
 }
 
 function writeJson() { $('out').value = JSON.stringify(payload()); }
+const writeJsonSoon = debounce(writeJson);
 
 const LAYER_CAP = `no room for another layer, ${L.MAX_LAYERS} is the most`;
 
@@ -1550,6 +1557,7 @@ $('load').onclick = () => {
     say(`loaded ${strokes.length} strokes`);
   } catch (err) { say('bad json: ' + errorText(err), true); }
 };
+$('advanced').addEventListener('toggle', () => { if ($('advanced').hasAttribute('open')) writeJson(); });
 $('target').oninput = () => { syncFriend(); writeJson(); };
 $('friend').onchange = () => { if ($('friend').value) $('target').value = $('friend').value; writeJson(); };
 $('render').onchange = writeJson;
