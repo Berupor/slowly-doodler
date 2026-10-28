@@ -4,6 +4,7 @@ import { photoToPolylines, textToPolylines } from './raster.js';
 import * as lib from './library.js';
 import * as P from './precision.js';
 import { createSelector } from './select.js';
+import * as F from './fill.js';
 
 const { W, H } = S;
 const NS = 'http://www.w3.org/2000/svg';
@@ -86,6 +87,7 @@ let gesture = null;
 let erasing = null;
 /** @type {{ strokes: S.Stroke[], last: number[], blocked: boolean } | null} */
 let cutting = null;
+let filling = false;
 let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
 /** @type {{ px: number, py: number, x: number, y: number } | null} */
 let refDrag = null;
@@ -128,10 +130,11 @@ const TOOLS = {
   line: () => span('tool-line'),
   ellipse: () => icon('circle-o', '◯'),
   eraser: () => icon('eraser', '⌫'),
+  fill: () => icon('droplet', '◐'),
   select: () => span('tool-select'),
 };
 /** @type {Record<string, string>} */
-const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser', s: 'select' };
+const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser', f: 'fill', s: 'select' };
 const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file])';
 
 /** @param {string} text */
@@ -290,6 +293,24 @@ function cutAt(e) {
   renderInk(next);
 }
 
+/** @param {PointerEvent} e */
+function fillAt(e) {
+  const points = strokes.reduce((a, s) => a + s.points.length, 0);
+  const density = Number($('fillSpacing').value);
+  const result = F.hatchRegion(F.rasterInk(strokes), toCanvas(e), {
+    style: $('fillStyle').value, angle: Number($('fillAngle').value) * Math.PI / 180, density, weight,
+  }, { strokes: S.LIMITS.strokes - strokes.length, points: S.LIMITS.points - points });
+  if ('error' in result) return say(result.error, true);
+  const start = strokes.length ? S.endTime(strokes) + STROKE_GAP_MS : 0;
+  const added = S.timed(result.lines.map(pts => ({ color, weight, pts })), start);
+  commit([...strokes, ...added]);
+  const notes = [
+    result.density > density && 'spacing widened to stay within the limits',
+    result.touchesEdge && 'the area is open to the page edge, undo if the outline has a gap',
+  ].filter(Boolean);
+  say([`filled with ${added.length} strokes`, ...notes].join(', '), notes.length > 0);
+}
+
 const ring = /** @type {SVGCircleElement} */ (document.querySelector('#eraserRing'));
 /** @param {{ clientX: number, clientY: number }} e */
 function placeRing(e) {
@@ -380,6 +401,7 @@ function cancelStroke() {
   if (gesture) { gesture = null; live.replaceChildren(); }
   if (erasing) { erasing = null; renderInk(); }
   if (cutting) { cutting = null; renderInk(); }
+  filling = false;
   refDrag = null;
   selector.cancel();
 }
@@ -421,6 +443,10 @@ board.addEventListener('pointerdown', e => {
   }
   if (tool === 'select') {
     selector.down(e);
+    return;
+  }
+  if (tool === 'fill') {
+    filling = true;
     return;
   }
   if (cutMode()) {
@@ -501,7 +527,10 @@ const endPointer = e => {
     board.classList.remove('panning');
   } else if (refDrag) refDrag = null;
   else if (selector.busy) selector.up();
-  else if (cutting) {
+  else if (filling) {
+    filling = false;
+    if (e.type === 'pointerup') fillAt(e);
+  } else if (cutting) {
     const done = cutting;
     cutting = null;
     if (done.strokes !== strokes) commit(done.strokes);
@@ -559,6 +588,7 @@ function buildBars() {
   setPicking(false);
   selector.sync(tool);
   board.classList.toggle('cutter', cutMode());
+  board.classList.toggle('filling', tool === 'fill');
   showWeight();
 }
 
@@ -908,6 +938,7 @@ $('dark').onchange = () => {
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
 $('eraserMode').onchange = buildBars;
+for (const [id, unit] of [['fillAngle', '°'], ['fillSpacing', '×']]) $(id).addEventListener('input', () => { $(`${id}Out`).textContent = $(id).value + unit; });
 $('rainbow').onchange = () => { rainbow = $('rainbow').checked; };
 $('gridSpacing').replaceChildren(...P.GRID_SPACINGS.map(n => new Option(`${n} units`, String(n))));
 function applyPrecision() {

@@ -595,6 +595,67 @@ with sync_playwright() as p:
     assert ring[0] == '' and live == [1, 2] and len(cut) == 2 and cut[1][0] > cut[0][0] and cut[1][1][0].endswith(',0')
     page.keyboard.press('Control+z'); print('cut undo is one step ->', page.evaluate('__doodler.strokes.length'))
     page.locator('#eraserMode').select_option('whole')
+
+    page.locator('#clear').click()
+    page.keyboard.press('o'); drag([(100, 200), (400, 420)])
+    page.keyboard.press('f')
+    cx, cy = 250, 310
+    def fill_report():
+        return page.evaluate('''() => { const [e, ...fill] = __doodler.strokes;
+          const xs = e.points.map(p => p[0]), ys = e.points.map(p => p[1]);
+          const mx = (Math.min(...xs) + Math.max(...xs)) / 2, my = (Math.min(...ys) + Math.max(...ys)) / 2;
+          const rx = (Math.max(...xs) - Math.min(...xs)) / 2, ry = (Math.max(...ys) - Math.min(...ys)) / 2;
+          const worst = Math.max(0, ...fill.flatMap(s => s.points.map(p => ((p[0] - mx) / rx) ** 2 + ((p[1] - my) / ry) ** 2)));
+          const ordered = fill.every((s, i) => i === 0 || s.startOffset >= fill[i - 1].startOffset);
+          return { fill: fill.length, worst, ordered, first: e.startOffset + e.points.at(-1)[2], start: fill[0]?.startOffset }; }''')
+    page.mouse.click(box['x'] + cx, box['y'] + cy)
+    hatch = fill_report()
+    print('fill hatch', hatch, validate(), page.locator('#status').inner_text())
+    assert hatch['fill'] > 5 and hatch['worst'] < 1 and hatch['ordered'] and hatch['start'] > hatch['first'] and validate()['ok']
+    page.screenshot(path=str(OUT / f'9-fill{SUFFIX}.png'))
+    page.keyboard.press('Control+z'); print('fill undo is one step ->', page.evaluate('__doodler.strokes.length'))
+    page.locator('#fillStyle').select_option('cross')
+    page.locator('#fillAngle').fill('30')
+    page.keyboard.press('f')
+    page.mouse.click(box['x'] + cx, box['y'] + cy)
+    cross = fill_report()
+    print('fill cross-hatch', cross, validate())
+    assert cross['fill'] > hatch['fill'] and cross['worst'] < 1
+    page.locator('#fillStyle').select_option('scribble')
+    page.keyboard.press('Control+z')
+    page.keyboard.press('f')
+    page.mouse.click(box['x'] + cx, box['y'] + cy)
+    scribble = fill_report()
+    print('fill scribble', scribble, validate())
+    assert 0 < scribble['fill'] < hatch['fill'] and scribble['worst'] < 1
+    page.mouse.click(box['x'] + 30, box['y'] + 30)
+    print('fill outside', page.evaluate('__doodler.strokes.length'), page.locator('#status').inner_text())
+    page.locator('#dark').check(force=True)
+    page.screenshot(path=str(OUT / f'9-fill-dark{SUFFIX}.png'))
+    page.locator('#dark').uncheck(force=True)
+
+    def load_square(extra):
+        sq = [{'color': 'black', 'weight': 3, 'startOffset': i * 300, 'points': pts} for i, pts in enumerate([
+            [[100, 100, 0], [500, 100, 100]], [[500, 100, 0], [500, 500, 100]], [[500, 500, 0], [100, 500, 100]], [[100, 500, 0], [100, 100, 100]]])]
+        page.locator('[data-tab=json]').click()
+        page.locator('#out').fill(json.dumps({'sdj': {'version': 1, 'canvas': {'width': 720, 'height': 960}, 'palette': {'black': {'light': '#222222', 'dark': '#F5F5F5'}}, 'strokes': sq + extra}}))
+        page.locator('#load').click()
+        page.locator('[data-tab=draw]').click()
+    scale = box['width'] / 720
+    page.locator('#fillStyle').select_option('hatch')
+    page.locator('#addColor').click()
+    load_square([])
+    page.keyboard.press('f')
+    page.mouse.click(box['x'] + 300 * scale, box['y'] + 300 * scale)
+    custom = page.evaluate('[__doodler.strokes.length, __doodler.strokes.at(-1).color]')
+    print('fill closed square in a custom colour', custom, page.locator('#status').inner_text(), validate())
+    assert custom[0] > 10 and custom[1] == 'c7e57c2' and 'page edge' not in page.locator('#status').inner_text()
+    gap = {'color': 'canvas', 'weight': 6, 'startOffset': 2000, 'points': [[250, 100, 0], [350, 100, 50]]}
+    load_square([gap])
+    page.keyboard.press('f')
+    page.mouse.click(box['x'] + 300 * scale, box['y'] + 300 * scale)
+    print('fill through a canvas-coloured gap', page.locator('#status').inner_text())
+    assert 'page edge' in page.locator('#status').inner_text()
     b.close()
 
 print('errors', errors)

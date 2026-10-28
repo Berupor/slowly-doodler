@@ -206,6 +206,7 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 #guides .thirds { stroke: #1e88e5; opacity: .55; stroke-dasharray: 6 4; }
 #guides .centre { stroke: #e53935; opacity: .5; }
 #board.cutter { cursor: none; }
+#board.filling { cursor: pointer; }
 #eraserRing { fill: color-mix(in srgb, var(--drawing-ink) 8%, transparent); stroke: var(--drawing-ink); stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: none; }
 #board.moving { cursor: move; }
 #board.pan { cursor: grab; }

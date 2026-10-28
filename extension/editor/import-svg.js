@@ -1,4 +1,5 @@
 import { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, nearestWeight } from './sdj.js';
+import { chainRows } from './fill.js';
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
 const PAD = 24;
@@ -163,27 +164,10 @@ function hatch(polys, spacing, angle) {
       }
     xs.sort((p, q) => p - q);
     const segs = [];
-    for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > 0.5) segs.push({ a: xs[i], b: xs[i + 1], used: false });
+    for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > 0.5) segs.push({ a: xs[i], b: xs[i + 1] });
     rows.push({ y, segs });
   }
-  const chains = [];
-  for (let r = 0; r < rows.length; r++)
-    for (const seg of rows[r].segs) {
-      if (seg.used) continue;
-      seg.used = true;
-      const pts = [[seg.a, rows[r].y], [seg.b, rows[r].y]];
-      let endX = seg.b, forward = false;
-      for (let n = r + 1; n < rows.length; n++) {
-        const next = rows[n].segs.find(s => !s.used && Math.abs((forward ? s.a : s.b) - endX) < spacing * 2);
-        if (!next) break;
-        next.used = true;
-        if (forward) { pts.push([next.a, rows[n].y], [next.b, rows[n].y]); endX = next.b; }
-        else { pts.push([next.b, rows[n].y], [next.a, rows[n].y]); endX = next.a; }
-        forward = !forward;
-      }
-      chains.push(pts.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]));
-    }
-  return chains;
+  return chainRows(rows, spacing, angle);
 }
 
 function pathLength(pts) {

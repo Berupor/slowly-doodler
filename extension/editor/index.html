@@ -101,6 +101,29 @@
       </div>
 
       <div class="card shadow-sm">
+        <div class="card-header">Fill</div>
+        <div class="card-body">
+          <div class="field">
+            <label for="fillStyle">Style</label>
+            <select class="custom-select custom-select-sm" id="fillStyle">
+              <option value="hatch">hatch</option><option value="cross">cross-hatch</option><option value="scribble">scribble</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fillAngle">Angle</label>
+            <input type="range" class="custom-range" id="fillAngle" min="0" max="175" step="5" value="45">
+            <output id="fillAngleOut">45°</output>
+          </div>
+          <div class="field">
+            <label for="fillSpacing">Spacing</label>
+            <input type="range" class="custom-range" id="fillSpacing" min="1.2" max="6" step="0.2" value="2">
+            <output id="fillSpacingOut">2×</output>
+          </div>
+          <div class="hint">The Fill tool hatches the closed shape you click, in the current colour and weight. Spacing is in stroke widths. Small gaps in the outline are ignored; a shape that is open to the page edge fills the whole open area.</div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
         <div class="card-header">Reference Image</div>
         <div class="card-body">
           <div class="field">
@@ -168,6 +191,7 @@
             <dt><kbd>Del</kbd></dt><dd>delete the selection</dd>
             <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd></dt><dd>copy, cut, paste; pasted strokes replay last</dd>
             <dt><kbd>Ctrl+D</kbd></dt><dd>duplicate the selection</dd>
+            <dt><kbd>F</kbd></dt><dd>fill</dd>
             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>weight</dd>
             <dt><kbd>Shift</kbd> + drag</dt><dd>line at 15° steps, circle, straight pen line</dd>
             <dt><kbd>Alt</kbd> + click</dt><dd>pick colour and weight from a stroke</dd>
