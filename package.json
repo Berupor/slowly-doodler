@@ -1,0 +1,18 @@
+{
+  "name": "slowly-doodler",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc -p jsconfig.json",
+    "check": "pnpm lint && pnpm typecheck",
+    "zip": "cd extension && zip -r ../slowly-doodler.zip ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.3.6",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "typescript": "^7.0.2"
+  }
+}
