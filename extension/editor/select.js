@@ -127,6 +127,42 @@ export function transformStroke(stroke, m) {
   };
 }
 
+/** @param {Box} b @returns {number[][]} */
+export const boxCorners = ({ x0, y0, x1, y1 }) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+
+/** @param {number[]} a @param {number[]} b @param {number[]} c */
+const turn = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+
+/** @param {number[][]} points the vertices that decide the bounds of the set under any affine map */
+export function convexHull(points) {
+  const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (sorted.length < 3) return sorted;
+  /** @param {number[][]} list */
+  const chain = list => {
+    const out = /** @type {number[][]} */ ([]);
+    for (const p of list) {
+      while (out.length >= 2 && turn(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  return [...chain(sorted), ...chain([...sorted].reverse())];
+}
+
+/** @param {number[][]} shape corners or hull of the selection @param {Matrix} m @returns {Box} what bounds() gives for the strokes after transformStroke, without visiting every point */
+export function movedBounds(shape, m) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of shape) {
+    const [nx, ny] = applyMatrix(m, x, y);
+    if (nx < x0) x0 = nx;
+    if (nx > x1) x1 = nx;
+    if (ny < y0) y0 = ny;
+    if (ny > y1) y1 = ny;
+  }
+  return { x0: clamp(x0, 0, S.W), y0: clamp(y0, 0, S.H), x1: clamp(x1, 0, S.W), y1: clamp(y1, 0, S.H) };
+}
+
 /** @param {Box} box @param {number} dx @param {number} dy translation limited so the box stays on the canvas, which keeps the shape intact */
 export function fitShift(box, dx, dy) {
   return /** @type {[number, number]} */ ([clamp(dx, -box.x0, S.W - box.x1), clamp(dy, -box.y0, S.H - box.y1)]);
@@ -218,6 +254,7 @@ function svg(tag, attrs = {}) {
  * @property {number[][]} [poly]
  * @property {S.Stroke[]} [items]
  * @property {Box} [box]
+ * @property {number[][]} [shape] corners of the box, or the convex hull of the points when rotating
  * @property {SVGElement[]} [hidden]
  * @property {Matrix} [m]
  */
@@ -317,6 +354,8 @@ export function createSelector(env) {
     for (const s of sel) if (!present.has(s) || (!held && !env.pickable(s))) sel.delete(s);
     bar.hidden = !sel.size || held;
     ghosts.replaceChildren();
+    ghosts.removeAttribute('transform');
+    haloLayer.removeAttribute('transform');
     lassoEl.removeAttribute('d');
     halos = held || sel.size > HALO_MAX ? [] : items().map(s => ({ el: svg('path', { class: 'halo', d: S.pathD(s.points) }), weight: s.weight }));
     haloLayer.replaceChildren(...halos.map(h => h.el));
@@ -326,7 +365,7 @@ export function createSelector(env) {
   }
 
   function zoomed() {
-    haloWidths();
+    if (!drag?.items) haloWidths();
     if (box && !drag) drawChrome(box, true);
   }
 
@@ -412,7 +451,21 @@ export function createSelector(env) {
     const hidden = /** @type {SVGElement[]} */ (picked.map(env.elementOf).filter(Boolean));
     for (const el of hidden) el.style.display = 'none';
     ghosts.replaceChildren(...picked.map(s => env.pathEl(s.points, s.color, s.weight)));
-    Object.assign(d, { kind, handle, items: picked, box: bounds(picked), hidden, m: IDENTITY });
+    const box = /** @type {Box} */ (bounds(picked));
+    const shape = kind === 'rotate' ? convexHull(picked.flatMap(s => s.points)) : boxCorners(box);
+    if (kind === 'scale') keepWidthUnderScale(picked);
+    Object.assign(d, { kind, handle, items: picked, box, shape, hidden, m: IDENTITY });
+  }
+
+  /** @param {S.Stroke[]} picked committed strokes keep their weight when scaled, so their previews are sized in screen pixels */
+  function keepWidthUnderScale(picked) {
+    const px = env.pxPerUnit();
+    const fix = (/** @type {Element} */ el, /** @type {number} */ width) => {
+      el.setAttribute('vector-effect', 'non-scaling-stroke');
+      el.setAttribute('stroke-width', String(width));
+    };
+    picked.forEach((s, i) => fix(ghosts.children[i], S.STROKE_SCALE * s.weight * px));
+    for (const h of halos) fix(h.el, S.STROKE_SCALE * h.weight * px + HALO_PX);
   }
 
   /** @param {Drag} d @param {{ x: number, y: number }} p @param {PointerEvent} e @returns {Matrix} */
@@ -437,13 +490,10 @@ export function createSelector(env) {
   /** @param {Drag} d @param {Matrix} m */
   function preview(d, m) {
     d.m = m;
-    const moved = /** @type {S.Stroke[]} */ (d.items).map(s => transformStroke(s, m));
-    moved.forEach((s, i) => {
-      const path = S.pathD(s.points);
-      ghosts.children[i].setAttribute('d', path);
-      halos[i]?.el.setAttribute('d', path);
-    });
-    drawChrome(/** @type {Box} */ (bounds(moved)), false);
+    const transform = `matrix(${m.join(' ')})`;
+    ghosts.setAttribute('transform', transform);
+    haloLayer.setAttribute('transform', transform);
+    drawChrome(movedBounds(/** @type {number[][]} */ (d.shape), m), false);
   }
 
   function endDrag() {

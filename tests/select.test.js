@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LIMITS, STROKE_SCALE, W, H, validate, buildSdj } from '../extension/editor/sdj.js';
 import {
   pointInPolygon, insideShare, lassoPick, hitStroke, bounds, translate, scaleAbout, rotateAbout, applyMatrix, compose, transformStroke,
-  fitShift, duplicateShift, scaleFactors, snapAngle, appendTimeline, pasteError, parseClip,
+  fitShift, duplicateShift, scaleFactors, boxCorners, convexHull, movedBounds, snapAngle, appendTimeline, pasteError, parseClip,
 } from '../extension/editor/select.js';
 
 const stroke = (points, overrides = {}) => ({ color: 'black', weight: 3, startOffset: 0, points, ...overrides });
@@ -152,6 +152,51 @@ describe('transforms', () => {
     const moved = transformStroke(line(10, 10, 700, 940), scaleAbout(1.5, 1.5, 0, 0));
     assert.deepEqual(moved.points.map(p => p.slice(0, 2)), [[15, 15], [W, H]]);
     assert.deepEqual(transformStroke(line(0, 0, 1, 1), scaleAbout(1 / 3, 1 / 3, 0, 0)).points[1].slice(0, 2), [0.33, 0.33]);
+  });
+});
+
+describe('movedBounds', () => {
+  const blob = [stroke([[300, 300, 0], [420, 310, 1], [380, 450, 2]]), stroke([[330, 380, 0], [350, 340, 1], [500, 400, 2], [310, 520, 3]])];
+  const exact = (m) => bounds(blob.map(s => transformStroke(s, m)));
+  const points = blob.flatMap(s => s.points);
+  const shapes = { box: boxCorners(bounds(blob)), hull: convexHull(points) };
+  const matrices = {
+    translate: translate(40, -25),
+    scale: scaleAbout(1.7, 0.6, 300, 300),
+    flip: scaleAbout(-1, 1, 400, 0),
+    rotate: rotateAbout(0.8, 400, 410),
+    clamped: scaleAbout(30, 30, 300, 300),
+  };
+
+  it('gives the bounds of the transformed strokes from the hull under any matrix', () => {
+    for (const m of Object.values(matrices)) {
+      const got = movedBounds(shapes.hull, m), want = exact(m);
+      for (const k of ['x0', 'y0', 'x1', 'y1']) near(got[k], want[k], 0.01);
+    }
+  });
+
+  it('gives the same from the box corners when the matrix keeps the axes', () => {
+    for (const name of ['translate', 'scale', 'flip', 'clamped']) {
+      const got = movedBounds(shapes.box, matrices[name]), want = exact(matrices[name]);
+      for (const k of ['x0', 'y0', 'x1', 'y1']) near(got[k], want[k], 0.01);
+    }
+  });
+
+  it('stays inside the canvas like the committed strokes do', () => {
+    const b = movedBounds(shapes.box, matrices.clamped);
+    assert.ok(b.x0 >= 0 && b.y0 >= 0 && b.x1 <= W && b.y1 <= H);
+  });
+});
+
+describe('convexHull', () => {
+  it('drops interior and collinear points', () => {
+    const hull = convexHull([...SQUARE, [150, 150], [150, 100], [120, 120]]);
+    assert.equal(hull.length, 4);
+  });
+
+  it('handles one or two points', () => {
+    assert.deepEqual(convexHull([[1, 2]]), [[1, 2]]);
+    assert.equal(convexHull([[1, 2], [1, 2], [5, 5]]).length, 2);
   });
 });
 
