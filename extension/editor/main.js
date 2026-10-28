@@ -785,7 +785,11 @@ function renderLibrary(items) {
 
 $('undo').onclick = () => restore(undoStack, redoStack);
 $('redo').onclick = () => restore(redoStack, undoStack);
-$('clear').onclick = () => { if (strokes.length) commit([]); };
+$('clear').onclick = () => {
+  if (strokes.length) commit([]);
+  openedId = null;
+  renderLibrary(libItems);
+};
 $('replay').onclick = () => replay === null ? startReplay() : stopReplay();
 $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
