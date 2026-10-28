@@ -1,6 +1,7 @@
 {
   "name": "slowly-doodler",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "lint": "eslint .",
