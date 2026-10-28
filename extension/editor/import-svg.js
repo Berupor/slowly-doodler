@@ -1,22 +1,89 @@
-import { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, nearestWeight } from './sdj.js';
+import { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, rdp } from './sdj.js';
 import { chainRows } from './fill.js';
+import { centerlines } from './raster.js';
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
+const NOT_RENDERED = 'defs,symbol,clipPath,mask,pattern,marker';
 const PAD = 24;
-const HATCH_WEIGHT = 1;
 const HATCH_SPACING = 5;
+const HATCH_GAP = 2.5;
 const HATCH_ANGLE = Math.PI / 4;
 const SAMPLE_STEP = 1.5;
 const POINT_BUDGET = 200000;
 const MIN_STROKE_LENGTH = 2;
+const MIN_ALPHA = 0.1;
+const USE_DEPTH = 8;
+const CENTERLINE_MAX = 10;
+const CENTERLINE_PX = 2;
+const EPS_FINE = 0.15, EPS_COARSE = 1.4;
 const YIELD_EVERY_MS = 25;
 const PATH_TOKEN = /([MmLlHhVvCcSsQqTtAaZz])|([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g;
 const PATH_ARGS = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
+const XLINK = 'http://www.w3.org/1999/xlink';
+const USE_OWN = ['href', 'xlink:href', 'x', 'y', 'width', 'height', 'transform', 'id'];
 
+/** @param {string} css @returns {number[] | null} rgb with the alpha blended over white */
 function parseColor(css) {
   const m = css && css.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
-  if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return null;
-  return m.slice(1, 4).map(Number);
+  if (!m) return null;
+  const a = m[4] === undefined ? 1 : Number(m[4]);
+  if (a < MIN_ALPHA) return null;
+  return m.slice(1, 4).map(v => Number(v) * a + 255 * (1 - a));
+}
+
+/** @param {Element} host @param {string} id @returns {number[] | null} mean stop colour, stops inherited through href */
+function gradientColor(host, id) {
+  for (let el = host.querySelector(`#${CSS.escape(id)}`), n = 0; el && n < USE_DEPTH; n++) {
+    const stops = [...el.querySelectorAll('stop')].map(s => parseColor(getComputedStyle(s).stopColor)).filter(c => !!c);
+    if (stops.length) return [0, 1, 2].map(i => stops.reduce((a, c) => a + c[i], 0) / stops.length);
+    const ref = el.getAttribute('href') || el.getAttributeNS(XLINK, 'href');
+    el = ref?.startsWith('#') ? host.querySelector(`#${CSS.escape(ref.slice(1))}`) : null;
+  }
+  return null;
+}
+
+/** @param {Element} host @param {string} css computed fill or stroke */
+function paint(host, css) {
+  if (!css || css === 'none') return null;
+  const url = css.match(/url\("?[^#"]*#([^")]+)"?\)/);
+  return (url && gradientColor(host, url[1])) || parseColor(css.replace(/url\([^)]*\)/, ''));
+}
+
+/** @param {Element} el @param {number} own fill-opacity or stroke-opacity */
+function opacity(el, own) {
+  let a = own;
+  for (let n = /** @type {Element | null} */ (el); n && n.namespaceURI === el.namespaceURI; n = n.parentElement) a *= Number(getComputedStyle(n).opacity);
+  return a;
+}
+
+/** @param {number[] | null} rgb @param {number} a */
+const faded = (rgb, a) => rgb && a >= MIN_ALPHA ? rgb.map(v => v * a + 255 * (1 - a)) : null;
+
+/** Replaces each <use> with a group holding a copy of what it references, so shapes in symbols and defs get drawn. @param {Element} root */
+function expandUses(root) {
+  for (let depth = 0; depth < USE_DEPTH; depth++) {
+    const uses = [...root.querySelectorAll('use')].filter(u => !u.closest(NOT_RENDERED));
+    if (!uses.length) return;
+    for (const use of uses) {
+      const ref = use.getAttribute('href') || use.getAttributeNS(XLINK, 'href') || '';
+      const target = ref.startsWith('#') ? root.querySelector(`#${CSS.escape(ref.slice(1))}`) : null;
+      const doc = /** @type {Document} */ (use.ownerDocument);
+      const group = doc.createElementNS(use.namespaceURI, 'g');
+      for (const a of [...use.attributes]) if (!USE_OWN.includes(a.name)) group.setAttribute(a.name, a.value);
+      const x = use.getAttribute('x') || 0, y = use.getAttribute('y') || 0;
+      group.setAttribute('transform', `${use.getAttribute('transform') || ''} translate(${x} ${y})`);
+      if (target?.localName === 'symbol') {
+        const box = doc.createElementNS(use.namespaceURI, 'svg');
+        for (const a of ['viewBox', 'preserveAspectRatio']) if (target.hasAttribute(a)) box.setAttribute(a, /** @type {string} */ (target.getAttribute(a)));
+        box.setAttribute('width', use.getAttribute('width') || '100%');
+        box.setAttribute('height', use.getAttribute('height') || '100%');
+        box.append(...[...target.childNodes].map(n => n.cloneNode(true)));
+        group.append(box);
+      } else if (target && !target.contains(use)) group.append(target.cloneNode(true));
+      for (const el of group.querySelectorAll('[id]')) el.removeAttribute('id');
+      use.replaceWith(group);
+    }
+  }
 }
 
 function sanitize(root) {
@@ -176,6 +243,35 @@ function pathLength(pts) {
   return l;
 }
 
+/**
+ * A filled shape no thicker than CENTERLINE_MAX traced as its centre line, the way Illustrator's Image Trace turns
+ * regions thinner than "stroke max width" into strokes. Null for thicker shapes.
+ * @param {number[][][]} subpaths canvas units @param {CanvasFillRule} rule
+ */
+function centreOf(subpaths, rule) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, perimeter = 0;
+  for (const sp of subpaths) {
+    perimeter += pathLength(sp) + Math.hypot(sp[0][0] - sp[sp.length - 1][0], sp[0][1] - sp[sp.length - 1][1]);
+    for (const [x, y] of sp) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  }
+  if (!perimeter || Math.min(x1 - x0, y1 - y0) <= 0) return null;
+  const k = CENTERLINE_PX, pad = 2;
+  const w = Math.ceil((x1 - x0) * k) + 2 * pad, h = Math.ceil((y1 - y0) * k) + 2 * pad;
+  const ctx = /** @type {OffscreenCanvasRenderingContext2D} */ (new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true }));
+  const path = new Path2D();
+  for (const sp of subpaths) {
+    sp.forEach(([x, y], i) => path[i ? 'lineTo' : 'moveTo']((x - x0) * k + pad, (y - y0) * k + pad));
+    path.closePath();
+  }
+  ctx.fill(path, rule);
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const mask = new Uint8Array(w * h);
+  let area = 0;
+  for (let i = 0; i < mask.length; i++) if (rgba[i * 4 + 3] > 127) { mask[i] = 1; area++; }
+  if (2 * area / (k * k) / perimeter > CENTERLINE_MAX) return null;
+  return centerlines(mask, w, h).map(p => p.map(([x, y]) => [(x - pad) / k + x0, (y - pad) / k + y0]));
+}
+
 function fitBudget(polylines) {
   if (polylines.length <= LIMITS.strokes) return polylines;
   const ranked = polylines.map((p, i) => ({ i, len: pathLength(p.pts) })).filter(r => r.len >= MIN_STROKE_LENGTH);
@@ -201,16 +297,20 @@ function yielder(onProgress) {
 }
 
 /**
+ * fills: outline draws filled shapes by their edge, hatch adds hatching inside, none skips them; thin filled shapes become centre lines either way.
+ * colors: one paints everything with color, snap picks the nearest palette colour, exact adds custom colours.
+ * weight: the weight of every stroke; remix keeps the weights from stroke-width. detail 0-100 sets how closely lines follow the curves.
  * @param {string} text
- * @param {{ fills?: string, colors?: string, remix?: boolean, onProgress?: (fraction: number) => void }} [options]
+ * @param {{ fills?: string, colors?: string, color?: string, weight?: number, detail?: number, remix?: boolean, onProgress?: (fraction: number) => void }} [options]
  */
-export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix = false, onProgress } = {}) {
+export async function importSvg(text, { fills = 'outline', colors = 'snap', color = 'black', weight = 1, detail = 50, remix = false, onProgress } = {}) {
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
   const src = /** @type {Element} */ (doc.documentElement);
   if (src.nodeName !== 'svg') throw new Error('not an svg file');
   sanitize(src);
+  expandUses(src);
   const host = /** @type {SVGSVGElement} */ (document.importNode(src, true));
-  host.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden';
+  host.style.cssText = 'position:absolute;left:-99999px;top:0;pointer-events:none';
   document.body.appendChild(host);
   const tick = yielder(onProgress);
   try {
@@ -225,14 +325,15 @@ export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix 
 
     const shapes = [];
     for (const el of /** @type {NodeListOf<SVGGeometryElement>} */ (host.querySelectorAll(SHAPES))) {
+      if (el.closest(NOT_RENDERED)) continue;
       const cs = getComputedStyle(el);
-      if (cs.display === 'none') continue;
-      const stroke = cs.stroke !== 'none' ? parseColor(cs.stroke) : null;
-      const fill = cs.fill !== 'none' ? parseColor(cs.fill) : null;
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      const stroke = faded(paint(host, cs.stroke), opacity(el, Number(cs.strokeOpacity)));
+      const fill = faded(paint(host, cs.fill), opacity(el, Number(cs.fillOpacity)));
       if (!stroke && !fill) continue;
       const matrix = rootInv.multiply(screenMatrix(el));
       const scale = Math.sqrt(Math.abs(matrix.a * matrix.d - matrix.b * matrix.c)) || 1;
-      shapes.push({ stroke, fill, sw: (parseFloat(cs.strokeWidth) || 1) * scale, matrix, scale,
+      shapes.push({ stroke, fill, rule: cs.fillRule === 'evenodd' ? 'evenodd' : 'nonzero', sw: (parseFloat(cs.strokeWidth) || 1) * scale, matrix, scale,
         d: shapeToPathData(el), length: el.getTotalLength() });
     }
     if (!shapes.length) throw new Error('no drawable shapes');
@@ -261,9 +362,12 @@ export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix 
       oy = (H - (maxY - minY) * k) / 2;
     }
     const map = sp => sp.map(([x, y]) => [(x - minX) * k + ox, (y - minY) * k + oy]);
+    const eps = remix ? 0 : EPS_COARSE + (EPS_FINE - EPS_COARSE) * Math.min(100, Math.max(0, detail)) / 100;
+    const simplify = pts => eps ? rdp(pts, eps) : pts;
 
     const palette = {};
     const token = rgb => {
+      if (colors === 'one') return color;
       const snapped = nearestBase(rgb, { allowCanvas: remix });
       if (colors !== 'exact' || snapped === CANVAS_TOKEN) return snapped;
       const hex = rgbToHex(rgb);
@@ -273,9 +377,8 @@ export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix 
       palette[t] = { light: hex, dark: hex };
       return t;
     };
-    const weightOf = w => colors === 'exact'
-      ? Math.round(Math.min(LIMITS.maxWeight, Math.max(LIMITS.minWeight, w)) * 2) / 2
-      : nearestWeight(w);
+    const weightOf = w => remix ? Math.round(Math.min(LIMITS.maxWeight, Math.max(LIMITS.minWeight, w)) * 2) / 2 : weight;
+    const spacing = Math.max(HATCH_SPACING, HATCH_GAP * STROKE_SCALE * weight);
 
     const polylines = [];
     for (let n = 0; n < shapes.length; n++) {
@@ -285,13 +388,15 @@ export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix 
       const fillToken = s.fill && token(s.fill);
       if (remix && !s.stroke && fillToken === CANVAS_TOKEN) continue;
       if (s.stroke) {
-        const weight = weightOf(s.sw * k / STROKE_SCALE);
-        for (const pts of subpaths) polylines.push({ color: strokeToken, weight, pts });
+        const w = weightOf(s.sw * k / STROKE_SCALE);
+        for (const pts of subpaths) polylines.push({ color: strokeToken, weight: w, pts: simplify(pts) });
       }
-      if (s.fill && fills !== 'none') {
-        if (!s.stroke) for (const pts of subpaths) polylines.push({ color: fillToken, weight: HATCH_WEIGHT, pts });
+      const centre = s.fill && !s.stroke && !remix ? centreOf(subpaths, s.rule) : null;
+      if (centre?.length) for (const pts of centre) polylines.push({ color: fillToken, weight, pts: simplify(pts) });
+      else if (s.fill && fills !== 'none') {
+        if (!s.stroke) for (const pts of subpaths) polylines.push({ color: fillToken, weight: weightOf(1), pts: simplify(pts) });
         if (fills === 'hatch')
-          for (const pts of hatch(subpaths, HATCH_SPACING, HATCH_ANGLE)) polylines.push({ color: fillToken, weight: HATCH_WEIGHT, pts });
+          for (const pts of hatch(subpaths, spacing, HATCH_ANGLE)) polylines.push({ color: fillToken, weight: weightOf(1), pts });
       }
       await tick(0.8 + 0.2 * (n + 1) / shapes.length);
     }

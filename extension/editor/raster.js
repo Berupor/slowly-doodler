@@ -22,6 +22,10 @@ const GAP_MAX = 10;
 const GAP_MIN_ALIGN = 0.6;
 const SMOOTH_RADIUS = 4;
 const SIMPLIFY_EPS = 0.45;
+const BILATERAL_PASSES = 2;
+const BILATERAL_RADIUS = 3;
+const BILATERAL_SIGMA_S = 2;
+const BILATERAL_SIGMA_R = 18;
 
 function thin(img, w, h) {
   const del = [];
@@ -133,6 +137,38 @@ function gaussian(g, w, h, sigma) {
       for (let i = -r; i <= r; i++) s += k[i + r] * tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x];
       out[y * w + x] = s;
     }
+  return out;
+}
+
+// Bilateral filter (Tomasi and Manduchi 1998): flattens texture such as fur, grass and sand while keeping outlines sharp
+function bilateral(g, w, h, radius, sigmaS, sigmaR) {
+  const out = new Float32Array(w * h);
+  const side = 2 * radius + 1;
+  const space = new Float32Array(side * side);
+  for (let dy = -radius; dy <= radius; dy++)
+    for (let dx = -radius; dx <= radius; dx++) space[(dy + radius) * side + dx + radius] = Math.exp(-(dx * dx + dy * dy) / (2 * sigmaS * sigmaS));
+  const range = new Float32Array(256);
+  for (let d = 0; d < 256; d++) range[d] = Math.exp(-d * d / (2 * sigmaR * sigmaR));
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const c = g[y * w + x];
+      let s = 0, t = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        const row = Math.min(h - 1, Math.max(0, y + dy)) * w, base = (dy + radius) * side + radius;
+        for (let dx = -radius; dx <= radius; dx++) {
+          const v = g[row + Math.min(w - 1, Math.max(0, x + dx))];
+          const k = space[base + dx] * range[Math.min(255, Math.abs(v - c) | 0)];
+          s += v * k; t += k;
+        }
+      }
+      out[y * w + x] = s / t;
+    }
+  return out;
+}
+
+function flattenTexture(g, w, h) {
+  let out = g;
+  for (let i = 0; i < BILATERAL_PASSES; i++) out = bilateral(out, w, h, BILATERAL_RADIUS, BILATERAL_SIGMA_S, BILATERAL_SIGMA_R);
   return out;
 }
 
@@ -474,12 +510,12 @@ function linkStrokes(lines, w, h) {
   return closeGaps(assemble(segs, pairAtJunctions(segs, nodes), dead));
 }
 
-function withinBudget(strokes, minLength, high) {
+function withinBudget(strokes, minLength, high, maxStrokes) {
   const kept = strokes.filter(s => s.len >= minLength && s.sum >= high * minLength * WEAK_STROKE_FACTOR).sort((a, b) => b.sum - a.sum);
   let points = 0;
   const out = [];
   for (const s of kept) {
-    if (out.length >= LIMITS.strokes || points + s.pts.length > LIMITS.points) break;
+    if (out.length >= Math.min(maxStrokes, LIMITS.strokes) || points + s.pts.length > LIMITS.points) break;
     out.push(s);
     points += s.pts.length;
   }
@@ -492,7 +528,20 @@ function visibleSpan(view, size, pan) {
   return { start, from: Math.max(0, start), to: Math.min(view, start + size) };
 }
 
-export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, color, weight, photoColors = false, zoom = 1, panX = 0, panY = 0 }) {
+/**
+ * Centre lines of a binary mask, the thinning approach of autotrace's centerline mode: Zhang-Suen skeleton, split at
+ * junctions, rejoined through crossings, smoothed and simplified. Returns polylines in mask pixels.
+ * @param {Uint8Array} mask modified in place @param {number} w @param {number} h
+ */
+export function centerlines(mask, w, h) {
+  thin(mask, w, h);
+  dropCornerPixels(mask, w, h);
+  return linkStrokes({ mask, strength: mask }, w, h)
+    .map(st => simplifyPath(smoothPath(st.pts, st.closed), st.closed))
+    .filter(p => p.length > 1);
+}
+
+export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, zoom = 1, panX = 0, panY = 0 }) {
   const scale = Math.min((W - 2 * PAD) / image.width, (H - 2 * PAD) / image.height) * zoom;
   const xs = visibleSpan(W, image.width * scale, panX), ys = visibleSpan(H, image.height * scale, panY);
   const sx = (xs.from - xs.start) / scale, sy = (ys.from - ys.start) / scale;
@@ -505,10 +554,10 @@ export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength
   const { data } = ctx.getImageData(0, 0, w, h);
   const g = grayscale(data, w, h);
   stretchLevels(g);
-  const lines = (DETECTORS[mode] || DETECTORS.edges)(g, w, h, detail);
+  const lines = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail);
   thin(lines.mask, w, h);
   dropCornerPixels(lines.mask, w, h);
-  const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength, lines.high)
+  const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength, lines.high, maxStrokes)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
   const kx = (xs.to - xs.from) / w, ky = (ys.to - ys.from) / h;
   const ox = xs.from, oy = ys.from;
