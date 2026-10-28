@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, W, H, buildSdj, validate, timed, pathD, nearestBase, hexToRgb } from '../extension/editor/sdj.js';
+import { LIMITS, W, H, buildSdj, validate, timed, pathD, nearestBase, hexToRgb, simplifyStrokes } from '../extension/editor/sdj.js';
 
 const stroke = (overrides = {}) => ({ color: 'black', weight: 3, startOffset: 0, points: [[0, 0, 0], [10, 10, 50]], ...overrides });
 const sdjOf = (strokes, palette = {}) => buildSdj(strokes, palette);
@@ -158,6 +158,34 @@ describe('timed', () => {
   it('produces strokes that pass validate', () => {
     const pts = Array.from({ length: 300 }, (_, i) => [(i * 13) % W, (i * 7) % H]);
     assert.equal(validate(buildSdj(timed([line(pts)], 0), {})), null);
+  });
+});
+
+describe('simplifyStrokes', () => {
+  it('drops points on a straight run and keeps the times of the rest', () => {
+    const points = [[0, 0, 0], [10, 0.1, 10], [20, 0, 20], [30, 0.05, 30], [30, 20, 50]];
+    assert.deepEqual(simplifyStrokes([stroke({ points })])[0].points, [[0, 0, 0], [30, 0.05, 30], [30, 20, 50]]);
+  });
+
+  it('keeps a corner and both ends', () => {
+    const points = [[0, 0, 0], [50, 0, 50], [50, 50, 100]];
+    assert.deepEqual(simplifyStrokes([stroke({ points })])[0].points, points);
+  });
+
+  it('does not collapse a stroke that ends where it began', () => {
+    const points = [[0, 0, 0], [40, 0, 40], [40, 40, 80], [0, 40, 120], [0, 0, 160]];
+    assert.deepEqual(simplifyStrokes([stroke({ points })])[0].points, points);
+  });
+
+  it('handles the longest allowed stroke', () => {
+    const points = Array.from({ length: LIMITS.pointsPerStroke }, (_, i) => [i % W, 100 + (i % 2) * 0.01, i]);
+    const out = simplifyStrokes([stroke({ points })])[0].points;
+    assert.deepEqual([out[0], out[out.length - 1]], [points[0], points[points.length - 1]]);
+  });
+
+  it('leaves the other stroke fields alone', () => {
+    const s = stroke({ color: 'red', weight: 6, startOffset: 120 });
+    assert.deepEqual(simplifyStrokes([s])[0], s);
   });
 });
 

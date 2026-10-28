@@ -17,6 +17,7 @@ export const CANVAS_ENTRY = { light: '#ffffff', dark: '#2a2f39' };
 export const SIZES = [1, 3, 6];
 export const LIMITS = { strokes: 1000, pointsPerStroke: 19999, points: 249998, palette: 32, minWeight: 0.5, maxWeight: 8 };
 export const STROKE_SCALE = 2;
+export const SEND_SIMPLIFY_EPS = 0.25;
 
 export const r2 = v => Math.round(v * 100) / 100;
 
@@ -111,6 +112,35 @@ export function timed(polylines, startAt, { unitsPerMs = 0.6, gapMs = 350, minSt
     offset += ms + gapMs * (0.6 + Math.random() * 0.8);
   }
   return out;
+}
+
+/** Ramer-Douglas-Peucker; keeps the original point objects, so a third coordinate (time) survives
+ * @template {number[]} P @param {P[]} pts @param {number} eps @returns {P[]} */
+export function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const spans = [[0, pts.length - 1]];
+  for (let span = spans.pop(); span; span = spans.pop()) {
+    const [from, to] = span;
+    const [ax, ay] = pts[from], [bx, by] = pts[to];
+    const len = Math.hypot(bx - ax, by - ay);
+    let max = 0, idx = from;
+    for (let i = from + 1; i < to; i++) {
+      const [x, y] = pts[i];
+      const d = len ? Math.abs((by - ay) * x - (bx - ax) * y + bx * ay - by * ax) / len : Math.hypot(x - ax, y - ay);
+      if (d > max) { max = d; idx = i; }
+    }
+    if (max <= eps) continue;
+    keep[idx] = 1;
+    spans.push([from, idx], [idx, to]);
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/** @param {Stroke[]} strokes @returns {Stroke[]} */
+export function simplifyStrokes(strokes, eps = SEND_SIMPLIFY_EPS) {
+  return strokes.map(s => ({ ...s, points: rdp(s.points, eps) }));
 }
 
 export function nearestWeight(w) {

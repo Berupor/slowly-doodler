@@ -1,4 +1,4 @@
-import { W, H, LIMITS, nearestBase } from './sdj.js';
+import { W, H, LIMITS, nearestBase, rdp } from './sdj.js';
 
 const PAD = 24;
 const TEXT_RENDER_SCALE = 1.5;
@@ -85,19 +85,6 @@ function trace(img, w, h) {
   for (let i = 0; i < img.length; i++) if (img[i] && !visited[i] && degree(i) === 1) from(i);
   for (let i = 0; i < img.length; i++) if (img[i] && !visited[i]) from(i);
   return paths;
-}
-
-function rdp(pts, eps) {
-  if (pts.length < 3) return pts;
-  const [ax, ay] = pts[0], [bx, by] = pts[pts.length - 1];
-  const len = Math.hypot(bx - ax, by - ay) || 1;
-  let max = 0, idx = 0;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const d = Math.abs((by - ay) * pts[i][0] - (bx - ax) * pts[i][1] + bx * ay - by * ax) / len;
-    if (d > max) { max = d; idx = i; }
-  }
-  if (max <= eps) return [pts[0], pts[pts.length - 1]];
-  return [...rdp(pts.slice(0, idx + 1), eps).slice(0, -1), ...rdp(pts.slice(idx), eps)];
 }
 
 function pathLength(pts) {

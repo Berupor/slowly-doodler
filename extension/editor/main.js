@@ -971,7 +971,7 @@ $('close').onclick = () => window.parent.postMessage({ type: 'doodler:close' }, 
 const send = $('send');
 send.hidden = !embedded;
 send.onclick = () => {
-  const sdj = S.buildSdj(strokes, palette);
+  const sdj = S.buildSdj(S.simplifyStrokes(strokes), palette);
   const err = S.validate(sdj);
   if (err) return say(err, true);
   window.parent.postMessage({ type: 'doodler:sdj', sdj }, SLOWLY_ORIGIN);
