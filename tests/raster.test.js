@@ -283,6 +283,36 @@ describe('drawn art', () => {
       for (const [x, y] of lines[0]) assert.ok(distToSegment(x, y, a, b) < 1.5, `${x} ${y} is off the centre`);
       assert.ok(length(lines[0]) > 0.9 * Math.hypot(b[0] - a[0], b[1] - a[1]), `${Math.round(length(lines[0]))} traced`);
     });
+
+  it('draws the dark strands of mid-brown hair, detailed', () => {
+    const hair = (/** @type {number} */ x, /** @type {number} */ y) => x > 100 && x < 300 && y > 60 && y < 340;
+    const { lines } = trace((x, y) => !hair(x, y) ? PAPER : x % 6 < 2 ? [70, 40, 20] : x % 6 < 4 ? [150, 100, 55] : [190, 135, 80], DETAILED);
+    const strands = lines.filter(pts => pts.every(([x, y]) => x > 106 && x < 294 && y > 50 && y < 350) && length(pts) > 150);
+    assert.ok(strands.length >= 16, `${strands.length} of 33 strands`);
+  });
+
+  for (const [name, preset] of Object.entries(PRESETS))
+    it(`keeps a small white triangle on a black mass, ${name}`, () => {
+      const nose = (/** @type {number} */ x, /** @type {number} */ y) => y > 190 && y < 204 && Math.abs(x - 200) < (y - 190) * 0.55;
+      const { lines } = trace((x, y) => nose(x, y) ? PAPER : Math.hypot(x - 200, y - 200) < 150 ? [8, 8, 8] : PAPER, preset);
+      assert.equal(near(lines, [200, 198], 8).length, 1, `${lines.length} strokes`);
+    });
+
+  it('draws a border in the darker of its two colours and a thin dash in its own colour', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    const YELLOW = [230, 195, 70], ROAD = [102, 72, 150], DASH = [50, 50, 60];
+    const panel = (/** @type {number} */ x, /** @type {number} */ y) => Math.abs(x - 200) < 50 && y > 220;
+    const body = (/** @type {number} */ x, /** @type {number} */ y) => Math.abs(x - 200) < 100 && y > 180;
+    const dash = (/** @type {number} */ x, /** @type {number} */ y) => Math.abs(y - 90) < 1.5 && x % 60 < 30 && x > 40 && x < 360;
+    const lines = traceCrop(paint(crop, (x, y) => panel(x, y) ? YELLOW : body(x, y) ? [30, 30, 30] : y > 60 && y < 120 ? dash(x, y) ? DASH : ROAD : PAPER), crop,
+      { ...DETAILED, color: 'black', weight: 1, photoColors: true }).map(l => ({ ...l, pts: l.pts.map(p => toSource(crop, p)) }));
+    const through = (/** @type {number[]} */ p) => lines.filter(l => near([l.pts], p, 3).length);
+    for (const p of [[150, 300], [250, 300], [75, 90], [135, 90], [195, 90], [255, 90], [315, 90]]) {
+      assert.equal(through(p).length, 1, `${through(p).length} strokes at ${p}`);
+      assert.equal(through(p)[0].color, 'black', `at ${p}`);
+    }
+  });
 });
 
 describe('clipToCanvas', () => {

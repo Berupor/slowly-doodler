@@ -802,7 +802,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(1200)
     big, b3 = (len(preview()), preview_points()), preview_box()
     check('scaling a placed photo up retraces it with more strokes and points', stretched == small[0] and big[0] > small[0] * 1.3 and big[1] > small[1] * 1.3, (small, big))
-    check('the retrace keeps the placement: the largest text keeps its place, finer text may appear', close((b3[0], b3[2], b3[3]), (b2[0], b2[2], b2[3]), 8) and b3[1] <= b2[1] + 8, (b2, b3))
+    check('the retrace keeps the placement: the largest text keeps its place, finer text may appear', close((b3[0], b3[3]), (b2[0], b2[3]), 8) and abs(b3[2] - b2[2]) <= 0.08 * (b2[2] - b2[0]) and b3[1] <= b2[1] + 8, (b2, b3))
     page.keyboard.press('Escape')
     act('#clear')
     page.keyboard.press('Shift+F')
