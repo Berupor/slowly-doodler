@@ -4,11 +4,21 @@ Chrome extension for web.slowly.app. It replaces the drawing editor in the lette
 
 Besides drawing by hand (symmetry brushes, tracing reference, layers, fill, lasso), it turns an SVG, a photo or text into pen strokes. Every import ends up as ordinary strokes with a timeline.
 
+## What it does
+
+Remix a received drawing, draw over it and send the result back:
+
 ![Remix a received drawing, draw over it, send](docs/flow.gif)
+
+A photo becomes pen strokes (left: the source image, right: the traced line art):
 
 ![An image next to its line art](docs/photo.png)
 
+An SVG is imported and replayed stroke by stroke:
+
 ![SVG imported and replayed stroke by stroke](docs/scene.gif)
+
+Symmetry brushes, here Kaleido 12 with rainbow strokes:
 
 ![Kaleido 12 symmetry with rainbow strokes](docs/draw.gif)
 
