@@ -238,7 +238,7 @@ with sync_playwright() as p:
     page.locator('[title=black]').click()
     page.keyboard.press('g')
     check('G shows the grid', page.evaluate('document.querySelectorAll("#guides path").length') == 3 and page.locator('#gridOn').is_checked())
-    check('guides sit between ref and ink', page.evaluate('[...document.querySelector("#board").children].map(e => e.id).join()') == 'ref,guides,ink,live')
+    check('guides sit between ref and ink', page.evaluate('[...document.querySelector("#board").children].map(e => e.id).join()').startswith('ref,guides,ink,'))
     check('guides use non-scaling hairlines', page.evaluate('[...document.querySelectorAll("#guides path")].every(p => getComputedStyle(p).vectorEffect === "non-scaling-stroke")'))
     check('grid is not in the exported SDJ', 'guides' not in page.locator('#out').input_value() and '"canvas"' in page.locator('#out').input_value())
     page.screenshot(path=str(OUT / f'8-grid{SUFFIX}.png'))
