@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow, inhibitTexture, isDrawnArt } from '../extension/editor/raster.js';
+import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow, inhibitTexture, isDrawnArt, isScan } from '../extension/editor/raster.js';
 import { W as CW, H as CH, LIMITS } from '../extension/editor/sdj.js';
 
 const W = 120, H = 120;
@@ -230,6 +230,48 @@ describe('photo flat colour', () => {
         assert.ok(!on[0].some(([x, y]) => deep(x, y)), `a stroke runs inside the ${shape}`);
       }
     });
+});
+
+describe('Ink scan on a photo and on a scan', () => {
+  const RADIUS = 70, circumference = 2 * Math.PI * RADIUS;
+  const patch = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 150, y - 160) < RADIUS;
+  const darkPhoto = () => {
+    const rnd = noise(4);
+    return (/** @type {number} */ x, /** @type {number} */ y) => {
+      const v = patch(x, y) ? 18 : 120 + 40 * Math.sin(x / 37) * Math.sin(y / 29);
+      return [v + 50 * rnd(), v + 30 * Math.sin(y / 31) + 50 * rnd(), v + 50 * rnd()];
+    };
+  };
+  const paperScan = () => {
+    const rnd = noise(9);
+    return (/** @type {number} */ x, /** @type {number} */ y) => {
+      if (patch(x, y)) { const v = 15 + 10 * rnd(); return [v, v, v]; }
+      return [232 + 30 * Math.sin(x / 43) + 24 * rnd(), 232 + 30 * Math.sin(y / 37 + 1) + 24 * rnd(), 232 + 30 * Math.sin((x + y) / 61) + 24 * rnd()];
+    };
+  };
+  const run = (/** @type {(x: number, y: number) => number[]} */ colourAt) => {
+    const crop = placementCrop(480, 320);
+    assert.ok(crop);
+    const data = paint(crop, colourAt);
+    assert.equal(isDrawnArt(data, crop.w, crop.h), false);
+    const lines = traceCrop(data, crop, { ...PRESETS.scan, color: 'black', weight: 1 }).map(l => l.pts.map(p => toSource(crop, p)));
+    const onRim = lines.flatMap(pts => pts.slice(1).filter(([x, y]) => Math.abs(Math.hypot(x - 150, y - 160) - RADIUS) < 2.5).map((q, i) => Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1])));
+    return { data, crop, lines, rim: onRim.reduce((a, d) => a + d, 0) / circumference };
+  };
+
+  it('does not outline the dark patches of a photo', () => {
+    const { data, crop, rim } = run(darkPhoto());
+    assert.equal(isScan(data, crop.w, crop.h), false);
+    assert.ok(rim < 0.2, `${Math.round(rim * 100)}% of the patch edge is traced`);
+  });
+
+  it('outlines a solid black mass on white paper once, along its edge', () => {
+    const { data, crop, lines, rim } = run(paperScan());
+    assert.equal(isScan(data, crop.w, crop.h), true);
+    assert.ok(rim > 0.9, `${Math.round(rim * 100)}% of the mass edge is traced`);
+    assert.equal(lines.filter(pts => pts.some(([x, y]) => Math.abs(Math.hypot(x - 150, y - 160) - RADIUS) < 6)).length, 1);
+    assert.ok(!lines.some(pts => pts.some(([x, y]) => Math.hypot(x - 150, y - 160) < RADIUS - 12)), 'a stroke runs inside the mass');
+  });
 });
 
 describe('drawn art', () => {

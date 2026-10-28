@@ -19,6 +19,8 @@ const LOCAL_SIGMA = 6;
 const SOLID_LEVEL = 64;
 const SOLID_GAP = 1;
 const SOLID_RADIUS = 4;
+const SCAN_PAPER_LEVEL = 230;
+const SCAN_PAPER_SHARE = 0.45;
 const LOCAL_THRESHOLDS = [70, 20];
 const WEAK_RATIO = 0.45;
 const WEAK_STROKE_FACTOR = 1.5;
@@ -444,13 +446,26 @@ function flowDog(g, w, h, detail) {
 }
 
 // Adaptive thresholding against the local Gaussian mean (as in OpenCV adaptiveThreshold): dark strokes on lighter ground
-function darkStrokes(g, w, h, detail) {
+function darkStrokes(g, w, h, detail, data, scan) {
   const fine = gaussian(g, w, h, 1), local = gaussian(g, w, h, LOCAL_SIGMA);
   const strength = new Float32Array(w * h);
   for (let i = 0; i < strength.length; i++) strength[i] = Math.max(0, local[i] - fine[i]);
-  const high = byDetail(LOCAL_THRESHOLDS, detail), mass = solidInk(fine, w, h), core = erode(mass, w, h, 1);
-  for (let i = 0; i < strength.length; i++) if (mass[i]) strength[i] = core[i] ? 0 : high;
+  const high = byDetail(LOCAL_THRESHOLDS, detail);
+  if (scan) {
+    const mass = solidInk(fine, w, h), core = erode(mass, w, h, 1);
+    for (let i = 0; i < strength.length; i++) if (mass[i]) strength[i] = core[i] ? 0 : high;
+  }
   return { strength, high };
+}
+
+/**
+ * A scanned drawing rather than a photo: most of the page is paper-white once noise is blurred away.
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h
+ */
+export function isScan(data, w, h, [r, g, b] = blurredColour(data, w, h)) {
+  let paper = 0;
+  for (let i = 0; i < r.length; i++) if (0.299 * r[i] + 0.587 * g[i] + 0.114 * b[i] >= SCAN_PAPER_LEVEL) paper++;
+  return paper >= SCAN_PAPER_SHARE * r.length;
 }
 
 /** @param {Uint8Array} mask @param {number} w @param {number} h @param {number} r */
@@ -1463,12 +1478,12 @@ function hatching(tones, w, h, pen, [strokes, points]) {
 
 /**
  * @param {Uint8ClampedArray} data @param {number} w @param {number} h
- * @param {{ mode: string, detail: number, focus: number[] | null, seeds: number[] }} opts
+ * @param {{ mode: string, detail: number, focus: number[] | null, seeds: number[], scan: boolean }} opts
  */
-function photoStrokes(data, w, h, { mode, detail, focus, seeds }) {
+function photoStrokes(data, w, h, { mode, detail, focus, seeds, scan }) {
   const g = grayscale(data, w, h);
   stretchLevels(g);
-  const found = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail, data);
+  const found = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail, data, scan);
   const raw = { ...found, strength: Float32Array.from(found.strength) };
   if (focus) {
     const weightOf = importance(data, w, h);
@@ -1498,7 +1513,7 @@ export function traceCrop(data, { w, h, toCanvas, enlarged }, {
       colours: Math.round(byDetail(REGION_COLOURS, detail)), minArea: byDetail(REGION_MIN_AREA, detail) / enlarged ** 2, radius: Math.max(LINE_MIN_RADIUS, Math.round(pen)), lineContrast: byDetail(LINE_CONTRAST, detail),
     })
     : null;
-  const { linked, high } = regions ? { linked: regions.strokes, high: REGION_MERGE_DE / WEAK_STROKE_FACTOR } : photoStrokes(data, w, h, { mode, detail, focus, seeds });
+  const { linked, high } = regions ? { linked: regions.strokes, high: REGION_MERGE_DE / WEAK_STROKE_FACTOR } : photoStrokes(data, w, h, { mode, detail, focus, seeds, scan: mode === 'dark' && isScan(data, w, h, blurred) });
   const lines = withinBudget(linked, minLength / enlarged, high, maxStrokes)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) }));
   const used = lines.reduce((a, s) => a + s.pts.length, 0);
