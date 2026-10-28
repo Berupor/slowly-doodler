@@ -284,9 +284,10 @@ function buildBars() {
   pillButtons('tools', 'drawing-tool-circle', Object.entries(TOOLS).map(([t, content]) => ({
     content: content(), title: t, on: tool === t, pick: () => tool = t,
   })));
-  pillButtons('sizes', 'drawing-tool-circle', S.SIZES.map((w, i) => ({
-    content: span('drawing-weight-dot', { width: [6, 10, 14][i] + 'px', height: [6, 10, 14][i] + 'px' }),
-    title: `weight ${w}`, on: weight === w, pick: () => setWeight(w),
+  const sizes = S.SIZES.includes(weight) ? S.SIZES : [...S.SIZES, weight].sort((a, b) => a - b);
+  pillButtons('sizes', 'drawing-tool-circle', sizes.map(w => ({
+    content: span('drawing-weight-dot', { width: 2 + 2 * w + 'px', height: 2 + 2 * w + 'px' }),
+    title: S.SIZES.includes(w) ? `weight ${w}` : `weight ${w}, experimental`, on: weight === w, pick: () => setWeight(w),
   })));
   const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
   pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
@@ -575,7 +576,10 @@ $('refFile').onchange = e => {
   resetRef();
   e.target.value = '';
 };
-$('refOpacity').oninput = () => ref.firstChild?.setAttribute('opacity', $('refOpacity').value);
+$('refOpacity').oninput = () => {
+  ref.firstChild?.setAttribute('opacity', $('refOpacity').value);
+  $('refOpacityOut').textContent = Math.round(Number($('refOpacity').value) * 100) + '%';
+};
 $('refClear').onclick = () => { ref.replaceChildren(); setRefMove(false); };
 
 function applyRef() {
@@ -632,6 +636,7 @@ $('libSave').onclick = async () => {
   renderLibrary(await lib.saveDrawing(name, S.buildSdj(strokes, palette)));
   $('libName').value = '';
   say(`saved "${name}"`);
+  $('refScaleOut').textContent = scale + '×';
 };
 
 $('copy').onclick = async () => {

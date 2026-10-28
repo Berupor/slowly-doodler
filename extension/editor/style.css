@@ -190,7 +190,7 @@ aside .nav-link { color: var(--lighter); }
 .field > label { margin: 0; }
 .field > label:not(.btn) { flex: none; width: 76px; color: var(--muted); }
 .field > .custom-select, .field > .form-control { flex: 1; width: auto; }
-.field output { min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+.field output { flex: none; width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 input[type=color] { width: 32px; height: 32px; padding: 0; border: 0; background: none; cursor: pointer; }
 .hint { font-size: 12px; color: var(--lighter); }
 .keys { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 0; font-size: 12px; color: var(--muted); }
