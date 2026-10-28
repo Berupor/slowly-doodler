@@ -11,7 +11,6 @@
   <div class="bar-group">
     <button class="bar-text" id="galleryBtn" popovertarget="popGallery" title="Gallery: saved drawings">Gallery</button>
     <button class="drawing-icon-button bar-button" id="insertBtn" popovertarget="popInsert" title="Insert a photo, SVG, text or reference image; or drop or paste a file on the canvas"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-    <button class="drawing-icon-button bar-button" id="actionsBtn" popovertarget="popActions" title="Actions: canvas, share, replay, help"><i class="icon-settings drawing-font-icon" data-glyph="⚙"></i></button>
     <button class="drawing-icon-button bar-button" id="guidesBtn" popovertarget="popGuides" title="Canvas guides: symmetry and grid"><i class="icon-grid drawing-font-icon" data-glyph="#"></i></button>
     <button class="drawing-tool-circle" id="selectTool" title="Select (S)" aria-pressed="false"><span class="tool-select"></span></button>
   </div>
@@ -23,7 +22,8 @@
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
     <button class="drawing-icon-button bar-button" id="fullscreen" title="Full screen (Shift+F)" aria-pressed="false"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
-    <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
+    <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing (hold or right-click for its options)" data-opts><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
+    <button class="drawing-icon-button bar-button" id="moreBtn" popovertarget="popMore" title="More: share, shortcuts, theme"><svg class="svg-icon" style="stroke-width: 3.2" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
     <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
     <button class="drawing-icon-button bar-button" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
   </div>
@@ -51,6 +51,7 @@
     <button class="side-button" id="pick" title="Eyedropper (I, or Alt+click)" aria-pressed="false"><span class="modify"></span></button>
     <button class="drawing-icon-button side-button" id="undo" title="Undo (Ctrl+Z)"><i class="icon-undo drawing-font-icon" data-glyph="↶"></i></button>
     <button class="drawing-icon-button side-button" id="redo" title="Redo (Ctrl+Shift+Z)"><i class="icon-undo drawing-font-icon flip" data-glyph="↶"></i></button>
+    <button class="drawing-icon-button side-button" id="clear" title="Clear canvas"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg></button>
   </div>
 
   <div class="dock">
@@ -98,29 +99,15 @@
   <div class="hint">Drawings live in this browser only; export a backup now and then.</div>
 </div>
 
-<div class="pop" id="popActions" popover aria-label="Actions">
-  <div class="tabs" id="tabs" role="tablist">
-    <button class="tab active" data-tab="canvas" role="tab" aria-selected="true">Canvas</button>
-    <button class="tab" data-tab="share" role="tab" aria-selected="false">Share</button>
-    <button class="tab" data-tab="video" role="tab" aria-selected="false">Replay</button>
-    <button class="tab" data-tab="prefs" id="prefsTab" role="tab" aria-selected="false">Prefs</button>
-    <button class="tab" data-tab="help" role="tab" aria-selected="false">Help</button>
-  </div>
-
-  <div class="panel" data-panel="canvas" role="tabpanel">
-    <section>
-      <div class="field"><h3>Clear canvas</h3><button class="btn btn-outline-light btn-sm" id="clear">Clear</button></div>
-      <div class="hint">Removes every stroke; one undo step brings them back.</div>
-    </section>
-  </div>
-
-  <div class="panel" data-panel="share" role="tabpanel" hidden>
-    <section>
-      <h3>Recipient</h3>
-      <div class="field">
-        <label for="friend">Friend</label>
-        <select class="custom-select custom-select-sm" id="friend"><option value="">other id</option></select>
-      </div>
+<div class="pop" id="popMore" popover aria-label="More">
+  <section>
+    <h3>Share</h3>
+    <div class="field">
+      <label for="friend">Friend</label>
+      <select class="custom-select custom-select-sm" id="friend"><option value="">other id</option></select>
+    </div>
+    <details class="json" id="advanced">
+      <summary>Advanced</summary>
       <div class="field">
         <label for="target">User id</label>
         <input type="number" class="form-control form-control-sm" id="target" placeholder="target_user">
@@ -129,45 +116,22 @@
         <input type="checkbox" class="custom-control-input" id="render" checked>
         <label class="custom-control-label" for="render">render</label>
       </div>
-    </section>
-    <section class="json">
-      <div class="field"><h3>SDJ</h3>
-        <button class="btn btn-outline-light btn-sm" id="copy">Copy</button>
-        <button class="btn btn-outline-light btn-sm" id="load">Load from text</button>
+      <div class="field">
+        <button class="btn btn-outline-light btn-sm" id="copy">Copy SDJ</button>
+        <button class="btn btn-outline-light btn-sm" id="load">Load SDJ</button>
       </div>
       <textarea class="form-control" id="out" spellcheck="false" aria-label="SDJ"></textarea>
-    </section>
-  </div>
-
-  <div class="panel" data-panel="video" role="tabpanel" hidden>
-    <section>
-      <h3>Replay</h3>
-      <div class="field">
-        <label for="replaySpeed">Speed</label>
-        <select class="custom-select custom-select-sm" id="replaySpeed">
-          <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
-        </select>
-      </div>
-      <div class="custom-control custom-switch">
-        <input type="checkbox" class="custom-control-input" id="compress" checked>
-        <label class="custom-control-label" for="compress">Skip pauses longer than 0.6 s</label>
-      </div>
-      <div class="hint">The recipient sees the drawing replayed stroke by stroke; the top bar play button previews it.</div>
-    </section>
-  </div>
-
-  <div class="panel" data-panel="prefs" role="tabpanel" hidden>
-    <section>
-      <div class="custom-control custom-switch">
-        <input type="checkbox" class="custom-control-input" id="dark">
-        <label class="custom-control-label" for="dark">Dark theme</label>
-      </div>
-    </section>
-  </div>
-
-  <div class="panel" data-panel="help" role="tabpanel" hidden>
-    <section>
-      <h3>Keyboard shortcuts</h3>
+    </details>
+  </section>
+  <section id="themeSection">
+    <div class="custom-control custom-switch">
+      <input type="checkbox" class="custom-control-input" id="dark">
+      <label class="custom-control-label" for="dark">Dark theme</label>
+    </div>
+  </section>
+  <section>
+    <details id="keysBox">
+      <summary>Keyboard shortcuts</summary>
       <dl class="keys">
         <dt><kbd>B</kbd></dt><dd>pen</dd>
         <dt><kbd>L</kbd></dt><dd>line</dd>
@@ -197,9 +161,23 @@
         <dt><kbd>Ctrl+Z</kbd></dt><dd>undo</dd>
         <dt><kbd>Ctrl+Shift+Z</kbd></dt><dd>redo</dd>
       </dl>
-      <div class="hint">Tap the active tool again for its options.</div>
-    </section>
+    </details>
+    <div class="hint">Tap the active tool again for its options; hold or right-click Replay for its speed.</div>
+  </section>
+</div>
+
+<div class="pop" id="popReplay" popover aria-label="Replay options">
+  <div class="field">
+    <label for="replaySpeed">Speed</label>
+    <select class="custom-select custom-select-sm" id="replaySpeed">
+      <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
+    </select>
   </div>
+  <div class="custom-control custom-switch">
+    <input type="checkbox" class="custom-control-input" id="compress" checked>
+    <label class="custom-control-label" for="compress">Skip pauses longer than 0.6 s</label>
+  </div>
+  <div class="hint">The recipient sees the drawing replayed stroke by stroke; the play button previews it.</div>
 </div>
 
 <div class="pop" id="popInsert" popover aria-label="Insert">

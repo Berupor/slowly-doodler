@@ -20,6 +20,8 @@
   --stage: #f2f2f2;
   --pop-shadow: 0 10px 30px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .08);
   --bar-h: 52px;
+  --toast-bottom: max(50px, calc(30px + var(--dock-h, 0px)));
+  --toast-zone: calc(var(--toast-bottom) + 64px);
   color-scheme: light;
 }
 :root.theme-dark {
@@ -158,8 +160,8 @@ button:focus:not(:focus-visible) { outline: 0; }
 }
 .bar-button { border-radius: 50%; }
 #close { margin-left: 8px; }
-.drawing-tool-circle[data-opts] { position: relative; }
-.drawing-tool-circle[data-opts]::after {
+:is(.drawing-tool-circle, #replay)[data-opts] { position: relative; }
+:is(.drawing-tool-circle, #replay)[data-opts]::after {
   content: ""; position: absolute; bottom: -6px; left: 50%; translate: -50% 0; width: 4px; height: 4px; border-radius: 50%;
   background: currentColor; opacity: .45;
 }
@@ -238,10 +240,12 @@ button:focus:not(:focus-visible) { outline: 0; }
 .hud .drawing-zoom { color: var(--drawing-ink); }
 .hud .drawing-count-limit { color: var(--over); }
 .toast {
-  position: fixed; inset: auto; top: calc(var(--bar-h) + 12px); left: 50%; translate: -50% 0; margin: 0; gap: 12px; max-width: min(560px, calc(100% - 140px));
+  position: fixed; inset: auto auto var(--toast-bottom) 50%; translate: -50% 0; margin: 0; gap: 12px; max-width: min(560px, calc(100% - 140px));
   height: auto; min-height: 36px; padding: 6px 16px; font-size: 13px; color: var(--drawing-ink);
+  border-color: color-mix(in srgb, var(--drawing-ink) 22%, transparent);
   box-shadow: var(--pop-shadow); opacity: 0; transition: opacity .25s; pointer-events: none;
 }
+#status { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .toast.shown, body.busy .toast { opacity: 1; }
 .toast:has(.error) { border-color: color-mix(in srgb, var(--over) 45%, transparent); }
 #status.error { color: var(--over); }
@@ -260,6 +264,11 @@ body.busy #popInsert :is(button, select, input, label.btn) { pointer-events: non
 .import-field input { width: 110px; }
 .import-field output { width: 24px; font-variant-numeric: tabular-nums; color: var(--text); }
 .import-bar .btn-sm { margin: 0; }
+#popMore { width: 360px; }
+#popMore > section { display: flex; flex-direction: column; gap: 10px; }
+#popMore > section + section { padding-top: 12px; border-top: 1px solid var(--line); }
+#advanced[open] { display: flex; flex-direction: column; gap: 10px; }
+#advanced > .field { margin-top: 0; }
 #popInsert > section { display: flex; flex-direction: column; gap: 10px; }
 #popInsert > section + section { padding-top: 12px; border-top: 1px solid var(--line); }
 #popInsert > .insert-files { flex-direction: row; gap: 8px; }
@@ -267,28 +276,18 @@ body.busy #popInsert :is(button, select, input, label.btn) { pointer-events: non
 
 .pop {
   position-area: bottom span-right; position-try-fallbacks: flip-inline;
-  inset: auto; margin: 6px 0 0; width: 320px; max-height: calc(100vh - var(--bar-h) - 16px); overflow: auto;
+  inset: auto; margin: 6px 0 0; width: 320px; max-height: calc(100vh - var(--bar-h) - var(--toast-zone)); overflow: auto;
   flex-direction: column; gap: 12px; padding: 16px;
   border: 1px solid var(--drawing-border); border-radius: 14px; background: var(--surface); color: var(--text);
   box-shadow: var(--pop-shadow);
 }
 .pop:popover-open { display: flex; }
-#popActions { width: 380px; padding: 0; gap: 0; overflow: hidden; }
-#popActions .panel { min-height: 0; overflow: auto; padding: 16px; }
+#replay { anchor-name: --replay; }
+#popReplay { position-anchor: --replay; }
 .pop-wide { width: min(600px, calc(100vw - 20px)); }
 .pop-head { display: flex; gap: 8px; align-items: center; }
 .pop-head .input-group { flex: 1; }
 .pop .btn-sm { display: inline-flex; align-items: center; flex: none; margin: 0; }
-.tabs { display: flex; flex: none; padding: 0 10px; border-bottom: 1px solid var(--line); }
-.tab {
-  flex: 1; padding: 10px 2px 8px; border: 0; border-bottom: 2px solid transparent; background: none;
-  color: var(--lighter); font-size: 13px; cursor: pointer;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--text); font-weight: 600; border-bottom-color: var(--drawing-accent); }
-.panel { display: flex; flex-direction: column; gap: 14px; }
-.panel section { display: flex; flex-direction: column; gap: 10px; }
-.panel section + section { padding-top: 14px; border-top: 1px solid var(--line); }
 .pop h3 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
 .field { display: flex; align-items: center; gap: 10px; }
 .field > label { margin: 0; }
@@ -300,7 +299,7 @@ body.busy #popInsert :is(button, select, input, label.btn) { pointer-events: non
 input[type=color] { width: 32px; height: 32px; padding: 0; border: 0; background: none; cursor: pointer; }
 .hint { font-size: 12px; color: var(--hint); }
 details > summary { color: var(--muted); font-size: 13px; cursor: pointer; }
-details > .field { margin-top: 10px; }
+details > :is(.field, .keys) { margin-top: 10px; }
 .keys { display: grid; grid-template-columns: fit-content(128px) 1fr; gap: 6px 12px; margin: 0; font-size: 12px; color: var(--muted); }
 .keys dt { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; font-weight: 400; }
 .keys dd { margin: 0; align-self: center; }
@@ -309,7 +308,6 @@ kbd {
   border-radius: .25rem; background: var(--bg); color: var(--text); font: 11px/1.4 ui-monospace, monospace; text-align: center;
 }
 .json textarea { height: 200px; resize: vertical; font: 11px/1.4 ui-monospace, monospace; }
-.panel textarea { resize: vertical; }
 .pop .drawing-colors { display: grid; grid-template-columns: repeat(6, 38px); gap: 6px; justify-content: space-between; width: auto; height: auto; padding: 0; }
 .custom-color { padding-top: 12px; border-top: 1px solid var(--line); }
 #popLayers { width: 300px; gap: 8px; overflow: hidden; }

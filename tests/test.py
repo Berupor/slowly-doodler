@@ -39,20 +39,23 @@ with sync_playwright() as p:
             page.mouse.move(box['x'] + x, box['y'] + y, steps=4)
         page.mouse.up()
 
-    POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
+    POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popMore': '#moreBtn', 'popReplay': '#replay', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                    'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]', 'popLayers': '#layersBtn'}
     def open_pop():
         return page.evaluate('document.querySelector(".pop:popover-open")?.id ?? null')
     def close_pops():
         page.evaluate('document.querySelectorAll(".pop:popover-open").forEach(p => p.hidePopover())')
     def ui(sel):
-        pop, tab = page.evaluate('s => { const el = document.querySelector(s); return [el.closest("[popover]")?.id ?? null, el.closest("[data-panel]")?.dataset.panel ?? null]; }', sel)
+        pop = page.evaluate('s => { const el = document.querySelector(s); el.closest("details")?.setAttribute("open", ""); return el.closest("[popover]")?.id ?? null; }', sel)
         if pop and open_pop() != pop:
             close_pops()
             button = page.locator(POP_BUTTONS[pop])
-            if button.get_attribute('aria-pressed') == 'false': button.click()
-            button.click()
-        if tab: page.locator(f'[data-tab={tab}]').click()
+            if pop == 'popReplay':
+                button.click(button='right')
+                page.locator('#popReplay').wait_for()
+            else:
+                if button.get_attribute('aria-pressed') == 'false': button.click()
+                button.click()
         return page.locator(sel)
     def act(sel, method='click', *args, **kw):
         getattr(ui(sel), method)(*args, **kw)
@@ -914,9 +917,8 @@ with sync_playwright() as p:
     page.keyboard.press('b')
     mouse_path([(100, 100), (300, 300)])
     check('a tap on the canvas closes the popover and draws nothing', open_pop() is None and len(S()) == 0)
-    page.locator('#actionsBtn').click()
-    page.locator('[data-tab=share]').click()
-    page.locator('#actionsBtn').click()
+    page.locator('#moreBtn').click()
+    page.locator('#moreBtn').click()
     page.keyboard.press('e')
     check('shortcuts work after a popover was used', open_pop() is None and page.locator('[data-tool=eraser]').get_attribute('aria-pressed') == 'true')
     page.keyboard.press('b')
@@ -933,6 +935,72 @@ with sync_playwright() as p:
     act('#writeText')
     page.wait_for_timeout(3000)
     check('an error toast stays longer', 'shown' in page.locator('#toast').get_attribute('class') and page.locator('#status.error').count() == 1)
+
+    before = S()
+    dialogs = []
+    page.on('dialog', lambda d: (dialogs.append(d.type), d.dismiss()))
+    page.keyboard.press('b')
+    page.mouse.move(*cv(100, 800)); page.mouse.down()
+    for x in (150, 200, 250, 300):
+        page.wait_for_timeout(700)
+        page.mouse.move(*cv(x, 800))
+    page.mouse.up()
+    act('#replaySpeed', 'select_option', '1')
+    glyph = lambda: page.locator('#replay i').get_attribute('data-glyph')
+    page.locator('#replay').click()
+    check('a tap on Replay plays and opens nothing', glyph() == '■' and open_pop() is None)
+    page.locator('#replay').click()
+    check('a second tap while it plays stops it', glyph() == '▶' and open_pop() is None)
+    page.locator('#replay').click(button='right')
+    page.locator('#popReplay').wait_for()
+    rep, bar = page.locator('#popReplay').bounding_box(), page.locator('#replay').bounding_box()
+    check('right-click on Replay opens its settings under the button', open_pop() == 'popReplay' and glyph() == '▶' and page.locator('#replaySpeed').is_visible()
+          and page.locator('#compress').is_visible() and abs(rep['y'] - (bar['y'] + bar['height'])) < 12 and rep['x'] < bar['x'] + bar['width'] and rep['x'] + rep['width'] >= bar['x'], (rep, bar))
+    close_pops()
+    page.locator('#replay').hover(); page.mouse.down(); page.wait_for_timeout(700); page.mouse.up()
+    page.locator('#popReplay').wait_for()
+    check('holding Replay opens its settings and does not play', open_pop() == 'popReplay' and glyph() == '▶')
+    page.mouse.move(600, 600)
+    page.locator('#replay').click()
+    check('a tap closes the settings and plays', glyph() == '■')
+    page.locator('#replay').click()
+    close_pops()
+    check('no Replay tab or Actions button is left', page.locator('[data-tab], #actionsBtn, #popActions').count() == 0)
+
+    n = len(S())
+    redo_box, clear_box = page.locator('#redo').bounding_box(), page.locator('#clear').bounding_box()
+    check('Clear is an icon button in the left strip under redo', page.locator('.side #clear').count() == 1 and page.locator('#clear').get_attribute('title') == 'Clear canvas'
+          and page.locator('#clear svg').count() == 1 and clear_box['y'] >= redo_box['y'] + redo_box['height'] - 1 and abs(clear_box['x'] - redo_box['x']) < 2, (redo_box, clear_box))
+    page.locator('#clear').click()
+    check('Clear empties the canvas with no dialog', len(S()) == 0 and not dialogs and open_pop() is None, (len(S()), dialogs))
+    page.keyboard.press('Control+z')
+    check('one undo brings the cleared strokes back', len(S()) == n and n == len(before) + 1, (len(S()), n))
+    page.keyboard.press('Control+z')
+    check('the canvas is back to what it was', S() == before)
+
+    close_pops()
+    page.evaluate('document.querySelectorAll("#popMore details").forEach(d => d.open = false)')
+    page.locator('#moreBtn').click()
+    check('the more menu opens with the Friend picker only under Share, no tabs', open_pop() == 'popMore' and page.locator('#popMore h3', has_text='Share').is_visible()
+          and page.locator('#friend').is_visible() and not page.locator('#target').is_visible() and not page.locator('#render').is_visible()
+          and not page.locator('#copy').is_visible() and not page.locator('#load').is_visible() and not page.locator('#out').is_visible()
+          and page.locator('#popMore :is(.tabs, .tab, [role=tab], [role=tablist], [data-tab])').count() == 0)
+    check('User id, render and the SDJ block are behind a collapsed Advanced', page.locator('#advanced').evaluate('d => d.tagName + d.open') == 'DETAILSfalse'
+          and page.locator('#popMore summary', has_text='Advanced').is_visible())
+    page.locator('#popMore summary', has_text='Advanced').click()
+    check('Advanced holds User id, render, Copy SDJ, Load SDJ and the text', page.locator('#target').is_visible() and page.locator('#render').count() == 1
+          and page.locator('#popMore').get_by_role('button', name='Copy SDJ').is_visible() and page.locator('#popMore').get_by_role('button', name='Load SDJ').is_visible()
+          and page.locator('#out').is_visible())
+    page.locator('#copy').click()
+    check('Copy SDJ fills the text', page.evaluate('document.getElementById("out").value').startswith('{'))
+    page.evaluate('document.getElementById("advanced").open = false')
+    check('the dark theme switch is in the menu in standalone mode', page.locator('#dark').count() == 1 and page.locator('label[for=dark]').is_visible())
+    check('shortcuts are collapsed in the menu', not page.locator('#popMore .keys').is_visible() and page.locator('#popMore summary', has_text='Keyboard shortcuts').is_visible())
+    page.locator('#popMore summary', has_text='Keyboard shortcuts').click()
+    check('the shortcuts list opens inline', page.locator('#popMore .keys').is_visible() and page.locator('#popMore .keys dd', has_text='select all').is_visible())
+    page.evaluate('document.getElementById("keysBox").open = false')
+    close_pops()
+    check('the more button sits at the right end of the top bar', page.locator('#moreBtn').bounding_box()['x'] > page.locator('#replay').bounding_box()['x'])
 
     def status(): return page.locator('#status').inner_text()
     def sdj(): return json.loads(page.locator('#out').input_value())['sdj']
@@ -1128,24 +1196,35 @@ with sync_playwright() as p:
     close_pops()
     check('Escape drops the preview the cap kept', not import_bar() and len(preview()) == len(S()))
     page.set_viewport_size({'width': 900, 'height': 700})
-    def toast_on_top(pop):
+    def toast_clear_of(pop):
         toast = page.locator('#toast').bounding_box()
         rect = page.locator(f'#{pop}').bounding_box()
-        x0, x1 = max(toast['x'], rect['x']), min(toast['x'] + toast['width'], rect['x'] + rect['width'])
-        y0, y1 = max(toast['y'], rect['y']), min(toast['y'] + toast['height'], rect['y'] + rect['height'])
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        over = x0 < x1 and y0 < y1
-        top = page.evaluate('([x, y]) => { const t = document.getElementById("toast"); t.style.pointerEvents = "auto"; const hit = !!document.elementFromPoint(x, y)?.closest("#toast"); t.style.pointerEvents = ""; return hit; }', [cx, cy])
-        return over and top
+        view = page.viewport_size
+        apart = (toast['x'] + toast['width'] <= rect['x'] or rect['x'] + rect['width'] <= toast['x']
+                 or toast['y'] + toast['height'] <= rect['y'] or rect['y'] + rect['height'] <= toast['y'])
+        inside = toast['x'] >= 0 and toast['y'] >= 0 and toast['x'] + toast['width'] <= view['width'] and toast['y'] + toast['height'] <= view['height']
+        return apart and inside and 'shown' in page.locator('#toast').get_attribute('class')
+    def toast_over(pop, sel):
+        act('#text', 'fill', '')
+        act('#writeText')
+        ui(sel)
+        page.wait_for_timeout(300)
+        return toast_clear_of(pop)
     ui('#libList')
     page.locator('#libList .card').first.get_by_role('button', name='Add').click()
     page.wait_for_timeout(100)
-    check('a toast shows above an open popover', 'no room for another layer' in status() and toast_on_top('popGallery'), status())
+    check('a toast stays clear of an open Gallery', 'no room for another layer' in status() and toast_clear_of('popGallery'), status())
     close_pops()
     ui('#layerList')
     page.wait_for_timeout(100)
-    check('a toast already on screen stays above a popover opened after it', toast_on_top('popLayers'))
+    check('a toast already on screen stays clear of Layers opened after it', toast_clear_of('popLayers'))
     close_pops()
+    for w, h in ((1280, 900), (900, 700), (700, 600)):
+        page.set_viewport_size({'width': w, 'height': h})
+        page.wait_for_timeout(100)
+        check(f'an error toast stays clear of the Gallery and Layers at {w}x{h}', toast_over('popGallery', '#libList') and toast_over('popLayers', '#layerList'))
+        close_pops()
+    page.set_viewport_size({'width': 900, 'height': 700})
     lay(row('l1', '.layer-visible'))
     lay(row('l2', '.layer-lock'))
     lay(row(layers()[-2]['id']))
@@ -1169,6 +1248,32 @@ with sync_playwright() as p:
             if w == 1280: page.locator(row(active(), '.layer-delete')).hover()
             page.screenshot(path=str(OUT / f'14-layers-{theme}-{w}{SUFFIX}.png'))
             close_pops()
+    act('#dark', 'uncheck', force=True)
+    for theme in ('light', 'dark'):
+        if theme == 'dark': act('#dark', 'check', force=True)
+        for w, h in ((1280, 900), (900, 700)):
+            page.set_viewport_size({'width': w, 'height': h})
+            page.wait_for_timeout(150)
+            close_pops()
+            page.screenshot(path=str(OUT / f'15-bar-{theme}-{w}{SUFFIX}.png'))
+            ui('#friend')
+            page.evaluate('document.querySelectorAll("#popMore details").forEach(d => d.open = false)')
+            page.wait_for_timeout(100)
+            page.screenshot(path=str(OUT / f'15-more-{theme}-{w}{SUFFIX}.png'))
+            page.locator('#popMore summary', has_text='Advanced').click()
+            page.screenshot(path=str(OUT / f'15-more-advanced-{theme}-{w}{SUFFIX}.png'))
+            page.locator('#popMore summary', has_text='Advanced').click()
+            page.locator('#popMore summary', has_text='Keyboard shortcuts').click()
+            page.screenshot(path=str(OUT / f'15-more-keys-{theme}-{w}{SUFFIX}.png'))
+            page.locator('#popMore summary', has_text='Keyboard shortcuts').click()
+            ui('#replaySpeed')
+            page.wait_for_timeout(100)
+            page.screenshot(path=str(OUT / f'15-replay-{theme}-{w}{SUFFIX}.png'))
+            toast_over('popGallery', '#libList')
+            page.screenshot(path=str(OUT / f'15-toast-gallery-{theme}-{w}{SUFFIX}.png'))
+            close_pops()
+            page.wait_for_timeout(300)
+            page.screenshot(path=str(OUT / f'15-toast-canvas-{theme}-{w}{SUFFIX}.png'))
     act('#dark', 'uncheck', force=True)
 
     page.set_viewport_size({'width': 1280, 'height': 900})

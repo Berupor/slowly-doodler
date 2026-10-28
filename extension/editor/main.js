@@ -161,7 +161,7 @@ const TOOLS = {
 };
 /** @type {Record<string, string>} */
 const TOOL_OPTIONS = { pen: 'popBrush', line: 'popBrush', ellipse: 'popBrush', eraser: 'popEraser', fill: 'popFill' };
-const TOAST_MS = 2500, TOAST_ERROR_MS = 6000;
+const TOAST_MS = 2500, TOAST_ERROR_MS = 6000, REPLAY_HOLD_MS = 450;
 /** @type {Record<string, string>} */
 const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser', f: 'fill', s: 'select' };
 const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file])';
@@ -1313,7 +1313,35 @@ $('clear').onclick = () => {
   openedId = null;
   renderLibrary(libItems);
 };
-$('replay').onclick = () => replay === null ? startReplay() : stopReplay();
+const replayButton = $('replay');
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let replayHold;
+let replayDown = false, replayHeld = false, replayWanted = false;
+const showReplayOptions = () => { if (!$('popReplay').matches(':popover-open')) $('popReplay').showPopover(); };
+/** a popover that opens while a pointer is down is light-dismissed by that pointer's own release, so it waits for it */
+const openReplayOptions = () => { if (replayDown) replayWanted = true; else showReplayOptions(); };
+const releaseReplay = () => {
+  clearTimeout(replayHold);
+  replayDown = false;
+  if (!replayWanted) return;
+  replayWanted = false;
+  setTimeout(showReplayOptions);
+};
+replayButton.onpointerdown = () => {
+  replayDown = true;
+  replayHeld = replayWanted = false;
+  clearTimeout(replayHold);
+  replayHold = setTimeout(() => { replayHeld = true; openReplayOptions(); }, REPLAY_HOLD_MS);
+};
+replayButton.onpointerleave = () => clearTimeout(replayHold);
+window.addEventListener('pointerup', releaseReplay, true);
+window.addEventListener('pointercancel', releaseReplay, true);
+replayButton.oncontextmenu = e => { e.preventDefault(); openReplayOptions(); };
+replayButton.onclick = () => {
+  if (replayHeld) replayHeld = false;
+  else if (replay === null) startReplay();
+  else stopReplay();
+};
 $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
   buildBars();
@@ -1490,18 +1518,6 @@ $('target').oninput = () => { syncFriend(); writeJson(); };
 $('friend').onchange = () => { if ($('friend').value) $('target').value = $('friend').value; writeJson(); };
 $('render').onchange = writeJson;
 
-$('tabs').onclick = e => {
-  if (!(e.target instanceof Element)) return;
-  const tab = /** @type {HTMLElement | null} */ (e.target.closest('[data-tab]'))?.dataset.tab;
-  if (!tab) return;
-  e.preventDefault();
-  for (const a of $('tabs').querySelectorAll('[data-tab]')) {
-    const on = a.getAttribute('data-tab') === tab;
-    a.classList.toggle('active', on);
-    a.setAttribute('aria-selected', String(on));
-  }
-  for (const p of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.panel'))) p.hidden = p.dataset.panel !== tab;
-};
 $('popGallery').addEventListener('toggle', e => { if (/** @type {ToggleEvent} */ (e).newState === 'open') showLibrary(); });
 for (const pop of document.querySelectorAll('.pop')) pop.addEventListener('toggle', e => {
   if (/** @type {ToggleEvent} */ (e).newState === 'open') raiseToast();
@@ -1571,7 +1587,7 @@ document.addEventListener('change', e => { if (e.target instanceof HTMLSelectEle
 window.addEventListener('blur', () => setSpace(false));
 $('zoom').onclick = () => resetView();
 
-$('prefsTab').hidden = embedded;
+$('themeSection').hidden = embedded;
 $('close').hidden = !embedded;
 const closeEditor = () => window.parent.postMessage({ type: 'doodler:close' }, SLOWLY_ORIGIN);
 $('close').onclick = closeEditor;

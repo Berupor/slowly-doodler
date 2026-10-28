@@ -15,7 +15,7 @@ GIF_HEIGHT = 640
 FLOW_WIDTH = 900
 REPLAY_FRAMES = 70
 PHOTO_SLIDERS = {'importDetail': '60', 'importWeight': '1'}
-POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
+POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popMore': '#moreBtn', 'popReplay': '#replay', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]'}
 BUILDING_STROKES = ['#8e24aa', '#1e88e5', '#0abab5', '#f06292', '#e53935']
 BASELINE = 720
@@ -144,13 +144,16 @@ def run():
             ed.locator('body').evaluate('() => document.querySelectorAll(":popover-open").forEach(p => p.hidePopover())')
 
         def ui(sel):
-            pop, tab = ed.locator('body').evaluate('(_, s) => { const el = document.querySelector(s); return [el.closest("[popover]")?.id ?? null, el.closest("[data-panel]")?.dataset.panel ?? null]; }', sel)
+            pop = ed.locator('body').evaluate('(_, s) => { const el = document.querySelector(s); el.closest("details")?.setAttribute("open", ""); return el.closest("[popover]")?.id ?? null; }', sel)
             if pop and ed.locator(f'#{pop}:popover-open').count() == 0:
                 close_pops()
                 button = ed.locator(POP_BUTTONS[pop])
-                if button.get_attribute('aria-pressed') == 'false': button.click()
-                button.click()
-            if tab: ed.locator(f'[data-tab={tab}]').click()
+                if pop == 'popReplay':
+                    button.click(button='right')
+                    ed.locator('#popReplay').wait_for()
+                else:
+                    if button.get_attribute('aria-pressed') == 'false': button.click()
+                    button.click()
             return ed.locator(sel)
 
         def act(sel, method='click', *args, **kw):

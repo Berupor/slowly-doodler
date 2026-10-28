@@ -31,7 +31,7 @@ No store listing. `chrome://extensions`, Developer mode, Load unpacked, pick `ex
 
 - Esc closes Doodler without sending.
 
-The top bar holds Gallery (saved drawings), `+` Insert (photo, SVG, text, reference image), Actions (Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers, colour, full screen and replay on the right. Tap the active tool again for its options. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.
+The top bar holds Gallery (saved drawings), `+` Insert (photo, SVG, text, reference image), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers, colour, full screen, replay and a more menu (friend picker, dark theme, shortcuts, an Advanced block with the raw sdj) on the right. Tap the active tool again for its options; hold or right-click Replay for its speed and pause skipping. The strip on the left has size, smoothing, the eyedropper, undo/redo and Clear canvas (one undo step brings the strokes back). Toasts show at the bottom centre, clear of open popovers. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight, Shift+F full screen.
 
 Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer named after the source (a Remix background at the bottom), hidden or locked layers are out of reach of the eraser and lasso, and a locked layer still works as a fill outline and an eyedropper source but is not drawn on. Paste goes to the active layer, Ctrl+D copies stay on the layer of the original.
 
@@ -57,7 +57,7 @@ The editor runs in an iframe from the extension, with Slowly's stylesheets passe
 
 ## What breaks
 
-The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When a selector the extension expects is missing, it logs `doodler_selector_missing` and shows a toast once per session. Actions > Share still gives you the sdj to copy.
+The send path depends on Slowly's markup and bundle. The selectors are in one object, `SLOWLY` in `content/content.js`. When a selector the extension expects is missing, it logs `doodler_selector_missing` and shows a toast once per session. More > Advanced still gives you the sdj to copy.
 
 If Slowly changes the drawing format, `editor/sdj.js` and the validator copy used by the e2e test need to follow.
 
