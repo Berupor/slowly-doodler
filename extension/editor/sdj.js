@@ -247,20 +247,17 @@ function cutOne(s, a, b, r) {
 
 /**
  * Removes the parts of strokes within r of the eraser path a-b (plus half the stroke width, so what is left ends at the eraser edge)
- * and splits the strokes there. Pieces keep their original timing. Returns the same array when nothing was cut;
- * a stroke whose split would exceed maxStrokes stays whole and sets blocked.
+ * and splits the strokes there. Pieces keep their original timing. Returns the same array when nothing was cut.
  * @param {Stroke[]} strokes @param {number[]} a @param {number[]} b @param {number} r
  */
-export function cutStrokes(strokes, a, b, r, maxStrokes = LIMITS.strokes) {
+export function cutStrokes(strokes, a, b, r) {
   /** @type {Stroke[]} */
   const out = [];
-  let blocked = false, changed = false;
-  strokes.forEach((s, i) => {
+  let changed = false;
+  for (const s of strokes) {
     const pieces = cutOne(s, a, b, r);
-    if (!pieces) { out.push(s); return; }
-    if (pieces.length > 1 && out.length + pieces.length + strokes.length - 1 - i > maxStrokes) { blocked = true; out.push(s); return; }
-    changed = true;
-    out.push(...pieces);
-  });
-  return { strokes: changed ? out : strokes, blocked };
+    changed ||= !!pieces;
+    out.push(...(pieces ?? [s]));
+  }
+  return changed ? out : strokes;
 }

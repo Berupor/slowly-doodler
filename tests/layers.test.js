@@ -63,7 +63,7 @@ describe('editable', () => {
     const { strokes, layers } = twoLayers();
     const locked = update(layers, 'l2', { locked: true });
     const part = editable(strokes, locked);
-    const { strokes: cut } = cutStrokes(part, [200, 50], [200, 350], 10);
+    const cut = cutStrokes(part, [200, 50], [200, 350], 10);
     const next = replaceEditable(strokes, locked, cut);
     assert.equal(next.length, 5);
     assert.deepEqual(next.slice(0, 4).map(s => s.layer), ['l1', 'l1', 'l1', 'l1']);

@@ -106,7 +106,7 @@ let redoStack = [];
 let gesture = null;
 /** @type {Set<S.Stroke> | null} */
 let erasing = null;
-/** @type {{ strokes: S.Stroke[], last: number[], blocked: boolean } | null} */
+/** @type {{ strokes: S.Stroke[], last: number[] } | null} */
 let cutting = null;
 let filling = false;
 let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
@@ -383,11 +383,8 @@ function cutAt(e) {
   if (!cutting) return;
   const p = boardPoint(e);
   const part = L.editable(cutting.strokes, layers);
-  const room = S.LIMITS.strokes - (L.visible(cutting.strokes, layers).length - part.length);
-  const { strokes: cut, blocked } = S.cutStrokes(part, cutting.last, [p.x, p.y], cutRadius(), room);
+  const cut = S.cutStrokes(part, cutting.last, [p.x, p.y], cutRadius());
   cutting.last = [p.x, p.y];
-  if (blocked && !cutting.blocked) say(`some strokes were not cut: splitting them would exceed ${S.LIMITS.strokes} strokes`, true);
-  cutting.blocked ||= blocked;
   if (cut === part) return;
   cutting.strokes = L.replaceEditable(cutting.strokes, layers, cut);
   patchInk(part, cut);
@@ -578,7 +575,7 @@ board.addEventListener('pointerdown', e => {
   }
   if (cutMode()) {
     const p = boardPoint(e);
-    cutting = { strokes, last: [p.x, p.y], blocked: false };
+    cutting = { strokes, last: [p.x, p.y] };
     cutAt(e);
     return;
   }
