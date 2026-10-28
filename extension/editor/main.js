@@ -16,6 +16,8 @@ const GAP_CAP_MS = 600;
 const STROKE_GAP_MS = 400;
 const HISTORY_DEPTH = 100;
 const ERASER_PROBE = [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]];
+const CUT_RADIUS_PER_WEIGHT = 4;
+const CUT_RADIUS_MIN = 2;
 const ZOOM_MAX = 8;
 const ZOOM_STEP = 1.25;
 const WHEEL_ZOOM = 0.01;
@@ -82,6 +84,8 @@ let redoStack = [];
 let gesture = null;
 /** @type {Set<S.Stroke> | null} */
 let erasing = null;
+/** @type {{ strokes: S.Stroke[], last: number[], blocked: boolean } | null} */
+let cutting = null;
 let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false;
 /** @type {{ px: number, py: number, x: number, y: number } | null} */
 let refDrag = null;
@@ -186,8 +190,8 @@ function pathEl(points, token, w) {
   return el;
 }
 
-function renderInk() {
-  ink.replaceChildren(...strokes.map(s => {
+function renderInk(list = strokes) {
+  ink.replaceChildren(...list.map(s => {
     const el = pathEl(s.points, s.color, s.weight);
     strokeOf.set(el, s);
     return el;
@@ -270,6 +274,33 @@ function eraseAt(e, erased) {
   }
 }
 
+const cutMode = () => tool === 'eraser' && $('eraserMode').value === 'cut';
+const cutRadius = () => Math.max(CUT_RADIUS_MIN, CUT_RADIUS_PER_WEIGHT * weight);
+
+/** @param {{ clientX: number, clientY: number }} e */
+function cutAt(e) {
+  if (!cutting) return;
+  const p = boardPoint(e);
+  const { strokes: next, blocked } = S.cutStrokes(cutting.strokes, cutting.last, [p.x, p.y], cutRadius());
+  cutting.last = [p.x, p.y];
+  if (blocked && !cutting.blocked) say(`some strokes were not cut: splitting them would exceed ${S.LIMITS.strokes} strokes`, true);
+  cutting.blocked ||= blocked;
+  if (next === cutting.strokes) return;
+  cutting.strokes = next;
+  renderInk(next);
+}
+
+const ring = /** @type {SVGCircleElement} */ (document.querySelector('#eraserRing'));
+/** @param {{ clientX: number, clientY: number }} e */
+function placeRing(e) {
+  ring.style.display = cutMode() ? '' : 'none';
+  if (!cutMode()) return;
+  const p = boardPoint(e);
+  ring.setAttribute('cx', String(p.x));
+  ring.setAttribute('cy', String(p.y));
+  ring.setAttribute('r', String(cutRadius()));
+}
+
 const pxPerUnit = () => board.getScreenCTM()?.a ?? 1;
 
 /** @param {[number, number]} p @returns {[number, number]} */
@@ -348,6 +379,7 @@ function pinchState() {
 function cancelStroke() {
   if (gesture) { gesture = null; live.replaceChildren(); }
   if (erasing) { erasing = null; renderInk(); }
+  if (cutting) { cutting = null; renderInk(); }
   refDrag = null;
   selector.cancel();
 }
@@ -391,6 +423,12 @@ board.addEventListener('pointerdown', e => {
     selector.down(e);
     return;
   }
+  if (cutMode()) {
+    const p = boardPoint(e);
+    cutting = { strokes, last: [p.x, p.y], blocked: false };
+    cutAt(e);
+    return;
+  }
   if (tool === 'eraser') {
     erasing = new Set();
     eraseAt(e, erasing);
@@ -431,6 +469,10 @@ board.addEventListener('pointermove', e => {
     selector.move(e);
     return;
   }
+  if (cutting) {
+    for (const ev of e.getCoalescedEvents?.() ?? [e]) cutAt(ev);
+    return;
+  }
   if (erasing) {
     for (const ev of e.getCoalescedEvents?.() ?? [e]) eraseAt(ev, erasing);
     return;
@@ -459,7 +501,11 @@ const endPointer = e => {
     board.classList.remove('panning');
   } else if (refDrag) refDrag = null;
   else if (selector.busy) selector.up();
-  else if (erasing) {
+  else if (cutting) {
+    const done = cutting;
+    cutting = null;
+    if (done.strokes !== strokes) commit(done.strokes);
+  } else if (erasing) {
     const gone = erasing;
     erasing = null;
     if (gone.size) commit(strokes.filter(s => !gone.has(s)));
@@ -468,6 +514,8 @@ const endPointer = e => {
     finishGesture(gesture);
   }
 };
+board.addEventListener('pointermove', placeRing);
+board.addEventListener('pointerleave', () => { ring.style.display = 'none'; });
 board.addEventListener('pointerup', endPointer);
 board.addEventListener('pointercancel', endPointer);
 
@@ -510,6 +558,7 @@ function buildBars() {
   board.classList.toggle('erasing', tool === 'eraser');
   setPicking(false);
   selector.sync(tool);
+  board.classList.toggle('cutter', cutMode());
   showWeight();
 }
 
@@ -533,7 +582,7 @@ function showWeight() {
 
 function setWeight(w) {
   weight = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
-  if (tool === 'eraser') tool = 'pen';
+  if (tool === 'eraser' && !cutMode()) tool = 'pen';
   selector.reweight(weight);
   buildBars();
   sizeRail.classList.add('showing');
@@ -858,6 +907,7 @@ $('dark').onchange = () => {
 };
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
+$('eraserMode').onchange = buildBars;
 $('rainbow').onchange = () => { rainbow = $('rainbow').checked; };
 $('gridSpacing').replaceChildren(...P.GRID_SPACINGS.map(n => new Option(`${n} units`, String(n))));
 function applyPrecision() {

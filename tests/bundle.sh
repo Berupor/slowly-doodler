@@ -7,7 +7,7 @@ mkdir -p "$T"
 O=$T/bundle.js
 {
 echo '(async () => {'
-echo 'const S = (() => {'; sed 's/^export //' "$R/sdj.js"; echo 'return { W, H, BASE_COLORS, CANVAS_TOKEN, CANVAS_ENTRY, SIZES, LIMITS, STROKE_SCALE, r2, baseEntry, customToken, entryFor, isStandard, pathD, endTime, buildSdj, validate, timed, nearestWeight, hexToRgb, rgbToHex, nearestBase, rdp, simplifyStrokes }; })();'
+echo 'const S = (() => {'; sed 's/^export //' "$R/sdj.js"; echo 'return { W, H, BASE_COLORS, CANVAS_TOKEN, CANVAS_ENTRY, SIZES, LIMITS, STROKE_SCALE, r2, baseEntry, customToken, entryFor, isStandard, pathD, endTime, buildSdj, validate, timed, nearestWeight, hexToRgb, rgbToHex, nearestBase, rdp, simplifyStrokes, cutStrokes }; })();'
 echo 'const { importSvg } = (() => { const { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, nearestWeight } = S;'; sed '/^import /d;s/^export //' "$R/import-svg.js"; echo 'return { importSvg }; })();'
 echo 'const { photoToPolylines, textToPolylines } = (() => { const { W, H, LIMITS, nearestBase, rdp } = S;'; sed '/^import /d;s/^export //' "$R/raster.js"; echo 'return { photoToPolylines, textToPolylines }; })();'
 echo 'const P = (() => { const { W, H, LIMITS, r2 } = S;'; sed '/^import /d;s/^export //' "$R/precision.js"; echo 'return { GRID_SPACINGS, loadSettings, saveSettings, snapAngle, squareCorner, constrainShape, snapToGrid, ropeRadius, minStepFor, follow, penMove, penEnd, renderGuides }; })();'

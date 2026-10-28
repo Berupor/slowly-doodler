@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LIMITS, W, H, buildSdj, validate, timed, pathD, nearestBase, hexToRgb, simplifyStrokes } from '../extension/editor/sdj.js';
+import { LIMITS, W, H, buildSdj, validate, timed, pathD, nearestBase, hexToRgb, simplifyStrokes, cutStrokes } from '../extension/editor/sdj.js';
 
 const stroke = (overrides = {}) => ({ color: 'black', weight: 3, startOffset: 0, points: [[0, 0, 0], [10, 10, 50]], ...overrides });
 const sdjOf = (strokes, palette = {}) => buildSdj(strokes, palette);
@@ -227,5 +227,94 @@ describe('nearestBase', () => {
 
   it('treats the light dark-mode black as black even when canvas is allowed', () => {
     assert.equal(nearestBase(hexToRgb('#F5F5F5'), { allowCanvas: true }), 'black');
+  });
+});
+
+describe('cutStrokes', () => {
+  const across = (overrides = {}) => stroke({ weight: 1, startOffset: 500, points: [[0, 0, 0], [100, 0, 1000]], ...overrides });
+  const absTime = (s, i) => s.startOffset + s.points[i][2];
+
+  it('cuts a long segment in two exactly where the eraser reaches, not only at existing points', () => {
+    const { strokes, blocked } = cutStrokes([across()], [50, 0], [50, 0], 10);
+    assert.equal(blocked, false);
+    assert.equal(strokes.length, 2);
+    assert.deepEqual(strokes[0].points, [[0, 0, 0], [39, 0, 390]]);
+    assert.deepEqual(strokes[1].points, [[61, 0, 0], [100, 0, 390]]);
+  });
+
+  it('keeps the replay timeline: every surviving point is drawn at its original time, ms re-based to 0 per piece', () => {
+    const { strokes } = cutStrokes([across()], [50, 0], [50, 0], 10);
+    assert.equal(strokes[0].startOffset, 500);
+    assert.equal(strokes[1].startOffset, 500 + 610);
+    for (const s of strokes) {
+      assert.equal(s.points[0][2], 0);
+      s.points.forEach(([x], i) => assert.equal(absTime(s, i), 500 + x * 10));
+    }
+  });
+
+  it('gives one piece when the cut reaches the start or the end', () => {
+    const atEnd = cutStrokes([across()], [100, 0], [100, 0], 10).strokes;
+    assert.equal(atEnd.length, 1);
+    assert.deepEqual(atEnd[0].points, [[0, 0, 0], [89, 0, 890]]);
+    const atStart = cutStrokes([across()], [0, 0], [0, 0], 10).strokes;
+    assert.equal(atStart.length, 1);
+    assert.equal(atStart[0].startOffset, 500 + 110);
+    assert.deepEqual(atStart[0].points, [[11, 0, 0], [100, 0, 890]]);
+  });
+
+  it('removes a stroke the eraser covers completely', () => {
+    assert.deepEqual(cutStrokes([across({ points: [[48, 0, 0], [52, 0, 40]] })], [50, 0], [50, 0], 10).strokes, []);
+  });
+
+  it('returns the very same array when the eraser touches nothing', () => {
+    const list = [across()];
+    assert.equal(cutStrokes(list, [50, 40], [60, 40], 10).strokes, list);
+  });
+
+  it('counts half the stroke width, so thick strokes end at the eraser edge', () => {
+    const thick = cutStrokes([across({ weight: 6 })], [50, 0], [50, 0], 10).strokes;
+    assert.deepEqual(thick[0].points.at(-1), [34, 0, 340]);
+    assert.deepEqual(thick[1].points[0], [66, 0, 0]);
+  });
+
+  it('cuts along a dragged path, a perpendicular sweep included', () => {
+    const swept = cutStrokes([across()], [30, 0], [60, 0], 5).strokes;
+    assert.deepEqual([swept[0].points.at(-1)[0], swept[1].points[0][0]], [24, 66]);
+    const crossed = cutStrokes([across()], [50, -30], [50, 30], 5).strokes;
+    assert.deepEqual([crossed[0].points.at(-1)[0], crossed[1].points[0][0]], [44, 56]);
+  });
+
+  it('keeps vertices, colour, weight and timing of a multi-point stroke on either side of the cut', () => {
+    const s = stroke({ color: 'red', weight: 1, startOffset: 100, points: [[0, 0, 0], [40, 0, 40], [80, 0, 90], [80, 40, 130], [40, 40, 170]] });
+    const out = cutStrokes([s], [80, 20], [80, 20], 6).strokes;
+    assert.equal(out.length, 2);
+    assert.ok(out.every(p => p.color === 'red' && p.weight === 1));
+    assert.equal(out[0].startOffset, 100);
+    assert.deepEqual(out[0].points, [[0, 0, 0], [40, 0, 40], [80, 0, 90], [80, 13, 103]]);
+    assert.equal(out[1].startOffset, 217);
+    assert.deepEqual(out[1].points, [[80, 27, 0], [80, 40, 13], [40, 40, 53]]);
+  });
+
+  it('removes a dot inside the eraser and keeps one outside', () => {
+    const dot = stroke({ points: [[50, 50, 0]] });
+    assert.deepEqual(cutStrokes([dot], [52, 50], [52, 50], 5).strokes, []);
+    const list = [dot];
+    assert.equal(cutStrokes(list, [90, 50], [90, 50], 5).strokes, list);
+  });
+
+  it('does not split past the stroke limit: the stroke stays whole and blocked is set', () => {
+    const list = [across()];
+    const middle = cutStrokes(list, [50, 0], [50, 0], 10, 1);
+    assert.equal(middle.blocked, true);
+    assert.equal(middle.strokes, list);
+    const end = cutStrokes(list, [100, 0], [100, 0], 10, 1);
+    assert.equal(end.blocked, false);
+    assert.equal(end.strokes.length, 1);
+  });
+
+  it('counts the strokes after the current one against the limit', () => {
+    const list = [across(), across({ points: [[0, 50, 0], [100, 50, 1000]] })];
+    assert.equal(cutStrokes(list, [50, 0], [50, 0], 10, 2).blocked, true);
+    assert.equal(cutStrokes(list, [50, 0], [50, 0], 10, 3).strokes.length, 3);
   });
 });

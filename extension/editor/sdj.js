@@ -167,3 +167,88 @@ export function nearestBase(rgb, { allowCanvas = false } = {}) {
   }
   return best;
 }
+
+const CUT_EPS = 1e-6;
+const MIN_PIECE = 0.5;
+
+/** Part [t0, t1] of the segment p-q within r of the segment a-b, or null. The capsule is convex, so the hit is one interval: the hull of the hits with its two end discs and its body. */
+function capsuleSpan(p, q, a, b, r) {
+  const dx = q[0] - p[0], dy = q[1] - p[1];
+  /** @type {[number, number][]} */
+  const spans = [];
+  for (const c of [a, b]) {
+    const fx = p[0] - c[0], fy = p[1] - c[1];
+    const A = dx * dx + dy * dy, B = fx * dx + fy * dy, C = fx * fx + fy * fy - r * r;
+    if (A === 0) { if (C <= 0) spans.push([0, 1]); continue; }
+    const disc = B * B - A * C;
+    if (disc >= 0) spans.push([(-B - Math.sqrt(disc)) / A, (-B + Math.sqrt(disc)) / A]);
+  }
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (len > 0) {
+    const ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len;
+    const rx = p[0] - a[0], ry = p[1] - a[1];
+    let lo = 0, hi = 1;
+    for (const [v, dv, min, max] of [[rx * ux + ry * uy, dx * ux + dy * uy, 0, len], [ry * ux - rx * uy, dy * ux - dx * uy, -r, r]]) {
+      if (dv === 0) { if (v < min || v > max) hi = -1; continue; }
+      const t0 = (min - v) / dv, t1 = (max - v) / dv;
+      lo = Math.max(lo, Math.min(t0, t1));
+      hi = Math.min(hi, Math.max(t0, t1));
+    }
+    if (lo <= hi) spans.push([lo, hi]);
+  }
+  const hits = spans.filter(([t0, t1]) => t1 >= 0 && t0 <= 1);
+  if (!hits.length) return null;
+  return [Math.max(0, Math.min(...hits.map(h => h[0]))), Math.min(1, Math.max(...hits.map(h => h[1])))];
+}
+
+/** @param {number[]} p @param {number[]} q @param {number} t @returns {Point} */
+const lerpPoint = (p, q, t) => [r2(p[0] + (q[0] - p[0]) * t), r2(p[1] + (q[1] - p[1]) * t), Math.round(p[2] + (q[2] - p[2]) * t)];
+
+/** @param {Point[]} c */
+const pathLength = c => c.reduce((m, p, i) => m + (i ? Math.hypot(p[0] - c[i - 1][0], p[1] - c[i - 1][1]) : 0), 0);
+
+/** @param {Stroke} s @param {number[]} a @param {number[]} b @param {number} r @returns {Stroke[] | null} null when the eraser path misses the stroke */
+function cutOne(s, a, b, r) {
+  const R = r + STROKE_SCALE * s.weight / 2, pts = s.points;
+  const x0 = Math.min(a[0], b[0]) - R, x1 = Math.max(a[0], b[0]) + R, y0 = Math.min(a[1], b[1]) - R, y1 = Math.max(a[1], b[1]) + R;
+  /** @type {Point[][]} */
+  const pieces = [];
+  /** @type {Point[] | null} */
+  let cur = null;
+  let touched = false;
+  for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
+    const p = pts[i], q = pts[Math.min(i + 1, pts.length - 1)];
+    const near = Math.max(p[0], q[0]) >= x0 && Math.min(p[0], q[0]) <= x1 && Math.max(p[1], q[1]) >= y0 && Math.min(p[1], q[1]) <= y1;
+    const span = near ? capsuleSpan(p, q, a, b, R) : null;
+    if (!span) { (cur ??= [p]).push(q); continue; }
+    touched = true;
+    if (span[0] > CUT_EPS) (cur ??= [p]).push(lerpPoint(p, q, span[0]));
+    if (cur) { pieces.push(cur); cur = null; }
+    if (span[1] < 1 - CUT_EPS) cur = [lerpPoint(p, q, span[1]), q];
+  }
+  if (!touched) return null;
+  if (cur) pieces.push(cur);
+  return pieces.filter(c => c.length > 1 && pathLength(c) >= MIN_PIECE).map(c => ({
+    color: s.color, weight: s.weight, startOffset: s.startOffset + c[0][2], points: c.map(([x, y, t]) => [x, y, t - c[0][2]]),
+  }));
+}
+
+/**
+ * Removes the parts of strokes within r of the eraser path a-b (plus half the stroke width, so what is left ends at the eraser edge)
+ * and splits the strokes there. Pieces keep their original timing. Returns the same array when nothing was cut;
+ * a stroke whose split would exceed maxStrokes stays whole and sets blocked.
+ * @param {Stroke[]} strokes @param {number[]} a @param {number[]} b @param {number} r
+ */
+export function cutStrokes(strokes, a, b, r, maxStrokes = LIMITS.strokes) {
+  /** @type {Stroke[]} */
+  const out = [];
+  let blocked = false, changed = false;
+  strokes.forEach((s, i) => {
+    const pieces = cutOne(s, a, b, r);
+    if (!pieces) { out.push(s); return; }
+    if (pieces.length > 1 && out.length + pieces.length + strokes.length - 1 - i > maxStrokes) { blocked = true; out.push(s); return; }
+    changed = true;
+    out.push(...pieces);
+  });
+  return { strokes: changed ? out : strokes, blocked };
+}
