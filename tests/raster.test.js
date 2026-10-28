@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow } from '../extension/editor/raster.js';
+import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow, inhibitTexture } from '../extension/editor/raster.js';
 import { W as CW, H as CH, LIMITS } from '../extension/editor/sdj.js';
 
 const W = 120, H = 120;
@@ -196,6 +196,17 @@ describe('photo sketch', () => {
     const ring = lines.map(l => l.pts.map(p => toSource(crop, p))).filter(pts => pts.every(([x, y]) => Math.abs(Math.hypot(x - 200, y - 200) - 120) < 6));
     assert.equal(ring.length, 1, `${ring.length} pieces on the circle, ${lines.length} strokes in all`);
     assert.ok(length(ring[0]) > 0.9 * 2 * Math.PI * 120, `${Math.round(length(ring[0]))} traced`);
+  });
+});
+
+describe('texture inhibition', () => {
+  it('keeps a lone edge and fades a crowd of them', () => {
+    const n = 120, s = new Float32Array(n * n);
+    for (let y = 0; y < n; y++) s[y * n + 20] = 10;
+    for (let y = 0; y < n; y++) for (let x = 60; x < 120; x += 3) s[y * n + x] = 10;
+    const out = inhibitTexture(s, n, n, 3);
+    assert.ok(out[60 * n + 20] > 6, `lone edge ${out[60 * n + 20]}`);
+    assert.ok(out[60 * n + 90] < 2, `crowded edge ${out[60 * n + 90]}`);
   });
 });
 

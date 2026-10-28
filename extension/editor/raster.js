@@ -13,6 +13,8 @@ const DOG_RATIO = 1.6;
 const DOG_THRESHOLDS = [20, 4];
 const FLOW_SIGMA = 2;
 const FLOW_DOG_SIGMA = 3;
+const INHIBIT_SIGMA = 12;
+const INHIBIT_ALPHA = 3;
 const LOCAL_SIGMA = 6;
 const LOCAL_THRESHOLDS = [70, 20];
 const WEAK_RATIO = 0.45;
@@ -227,6 +229,17 @@ function importance(data, w, h) {
   return out;
 }
 
+/**
+ * Surround suppression (Grigorescu, Petkov and Westenberg 2003, contour detection with non-classical receptive field
+ * inhibition): an edge loses the average edge strength around it, so texture where edges crowd (fur, streaks, sand)
+ * fades while an outline with plain ground on one side keeps most of its strength.
+ * @param {Float32Array} strength @param {number} w @param {number} h @param {number} alpha
+ */
+export function inhibitTexture(strength, w, h, alpha) {
+  const around = gaussian(strength, w, h, INHIBIT_SIGMA);
+  return strength.map((s, i) => Math.max(0, s - alpha * around[i]));
+}
+
 /** @param {number[]} range @param {number} detail */
 const byDetail = ([hi, lo], detail) => hi * (lo / hi) ** (detail / 100);
 
@@ -295,7 +308,7 @@ function cannyEdges(g, w, h, detail, data) {
       shift[2 * i] = t * step[dir[i]][0];
       shift[2 * i + 1] = t * step[dir[i]][1];
     }
-  return { strength, high: byDetail(CANNY_THRESHOLDS, detail), shift };
+  return { strength, high: byDetail(CANNY_THRESHOLDS, detail), shift, inhibit: INHIBIT_ALPHA };
 }
 
 function bilinear(a, w, h, x, y) {
@@ -818,7 +831,8 @@ export function traceCrop(data, { w, h, toCanvas, enlarged }, {
     for (let i = 0; i < found.strength.length; i++) found.strength[i] *= focus[0] + (focus[1] - focus[0]) * weightOf[i];
   }
   const high = found.high * seeds[0], thresholds = /** @type {[number, number]} */ ([high * seeds[1], high]);
-  const lines = { ...found, high, mask: hysteresis(found.strength, w, h, thresholds) };
+  const ranked = found.inhibit ? inhibitTexture(found.strength, w, h, found.inhibit) : found.strength;
+  const lines = { ...found, strength: ranked, high, mask: hysteresis(found.strength, w, h, thresholds) };
   thin(lines.mask, w, h);
   dropCornerPixels(lines.mask, w, h);
   const linked = linkStrokes(lines, w, h);
