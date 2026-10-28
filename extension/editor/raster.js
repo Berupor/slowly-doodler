@@ -11,6 +11,8 @@ const CANNY_THRESHOLDS = [20, 5];
 const DOG_SIGMAS = [1.8, 0.9];
 const DOG_RATIO = 1.6;
 const DOG_THRESHOLDS = [20, 4];
+const FLOW_SIGMA = 2;
+const FLOW_DOG_SIGMA = 3;
 const LOCAL_SIGMA = 6;
 const LOCAL_THRESHOLDS = [70, 20];
 const WEAK_RATIO = 0.45;
@@ -140,15 +142,19 @@ function gaussian(g, w, h, sigma) {
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       let s = 0;
-      for (let i = -r; i <= r; i++) s += k[i + r] * g[y * w + Math.min(w - 1, Math.max(0, x + i))];
+      if (x >= r && x < w - r) for (let i = -r, j = y * w + x - r; i <= r; i++, j++) s += k[i + r] * g[j];
+      else for (let i = -r; i <= r; i++) s += k[i + r] * g[y * w + Math.min(w - 1, Math.max(0, x + i))];
       tmp[y * w + x] = s;
     }
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let i = -r; i <= r; i++) s += k[i + r] * tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x];
-      out[y * w + x] = s;
+  const col = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    col.fill(0);
+    for (let i = -r; i <= r; i++) {
+      const row = Math.min(h - 1, Math.max(0, y + i)) * w, ki = k[i + r];
+      for (let x = 0; x < w; x++) col[x] += ki * tmp[row + x];
     }
+    out.set(col, y * w);
+  }
   return out;
 }
 
@@ -292,12 +298,80 @@ function cannyEdges(g, w, h, detail, data) {
   return { strength, high: byDetail(CANNY_THRESHOLDS, detail), shift };
 }
 
-// Difference of Gaussians line drawing, the thresholded core of XDoG (Winnemoeller et al. 2012, https://doi.org/10.1016/j.cag.2012.03.004)
-function dogLines(g, w, h, detail) {
-  const sigma = byDetail(DOG_SIGMAS, detail);
-  const fine = gaussian(g, w, h, sigma), coarse = gaussian(g, w, h, sigma * DOG_RATIO);
+function bilinear(a, w, h, x, y) {
+  const cx = Math.min(w - 1.001, Math.max(0, x)), cy = Math.min(h - 1.001, Math.max(0, y));
+  const x0 = cx | 0, y0 = cy | 0, tx = cx - x0, ty = cy - y0, i = y0 * w + x0;
+  return (a[i] * (1 - tx) + a[i + 1] * tx) * (1 - ty) + (a[i + w] * (1 - tx) + a[i + w + 1] * tx) * ty;
+}
+
+/**
+ * Edge tangent flow: the unit direction along the edges at every pixel, from the smoothed structure tensor
+ * (Kyprianidis and Doellner 2008, the closed form of the ETF of Kang et al. 2007). coherence is 0 where nothing runs anywhere.
+ * @param {Float32Array} g @param {number} w @param {number} h @param {number} [sigma]
+ */
+export function edgeFlow(g, w, h, sigma = FLOW_SIGMA) {
+  let e = new Float32Array(w * h), f = new Float32Array(w * h), q = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = (g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1]) / 8;
+      const gy = (g[i + w - 1] + 2 * g[i + w] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - w] - g[i - w + 1]) / 8;
+      e[i] = gx * gx; f[i] = gx * gy; q[i] = gy * gy;
+    }
+  [e, f, q] = [e, f, q].map(a => gaussian(a, w, h, sigma));
+  const tx = new Float32Array(w * h), ty = new Float32Array(w * h), coherence = new Float32Array(w * h);
+  for (let i = 0; i < tx.length; i++) {
+    const root = Math.hypot(e[i] - q[i], 2 * f[i]), major = (e[i] + q[i] + root) / 2;
+    const gx = e[i] >= q[i] ? major - q[i] : f[i], gy = e[i] >= q[i] ? f[i] : major - e[i], norm = Math.hypot(gx, gy);
+    if (norm) { tx[i] = -gy / norm; ty[i] = gx / norm; } else ty[i] = 1;
+    coherence[i] = root / (e[i] + q[i] + 1e-6);
+  }
+  return { tx, ty, coherence };
+}
+
+// Flow-based difference of Gaussians (Kang, Lee and Chui 2007, Coherent Line Drawing): a 1D DoG across the edge,
+// then a Gaussian average along the flow, so a line holds together where the plain DoG breaks into dashes; the DoG is the
+// thresholded core of XDoG (Winnemoeller et al. 2012, https://doi.org/10.1016/j.cag.2012.03.004)
+function flowDog(g, w, h, detail) {
+  const sigma = byDetail(DOG_SIGMAS, detail), outer = sigma * DOG_RATIO, reach = Math.ceil(3 * outer);
+  const { tx, ty } = edgeFlow(g, w, h);
+  const narrow = new Float32Array(2 * reach + 1), wide = new Float32Array(2 * reach + 1), kernel = new Float32Array(2 * reach + 1);
+  for (let t = -reach; t <= reach; t++) {
+    narrow[t + reach] = Math.exp(-t * t / (2 * sigma * sigma));
+    wide[t + reach] = Math.exp(-t * t / (2 * outer * outer));
+  }
+  const narrowSum = narrow.reduce((a, v) => a + v, 0), wideSum = wide.reduce((a, v) => a + v, 0);
+  for (let k = 0; k < kernel.length; k++) kernel[k] = wide[k] / wideSum - narrow[k] / narrowSum;
+  const dog = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x, nx = ty[i], ny = -tx[i];
+      let sum = 0;
+      for (let t = -reach; t <= reach; t++) sum += kernel[t + reach] * bilinear(g, w, h, x + t * nx, y + t * ny);
+      dog[i] = sum;
+    }
+  const along = Math.ceil(2 * FLOW_DOG_SIGMA);
+  const weight = Array.from({ length: along + 1 }, (_, s) => Math.exp(-s * s / (2 * FLOW_DOG_SIGMA * FLOW_DOG_SIGMA)));
   const strength = new Float32Array(w * h);
-  for (let i = 0; i < strength.length; i++) strength[i] = Math.max(0, coarse[i] - fine[i]);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let sum = dog[i] * weight[0], total = weight[0];
+      for (let dir = -1; dir <= 1; dir += 2) {
+        let px = x, py = y, dx = dir * tx[i], dy = dir * ty[i];
+        for (let s = 1; s <= along; s++) {
+          px += dx; py += dy;
+          if (px < 0 || py < 0 || px > w - 1 || py > h - 1) break;
+          const j = Math.round(py) * w + Math.round(px);
+          let ux = tx[j], uy = ty[j];
+          if (ux * dx + uy * dy < 0) { ux = -ux; uy = -uy; }
+          dx = ux; dy = uy;
+          sum += weight[s] * bilinear(dog, w, h, px, py);
+          total += weight[s];
+        }
+      }
+      strength[i] = Math.max(0, sum / total);
+    }
   return { strength, high: byDetail(DOG_THRESHOLDS, detail) };
 }
 
@@ -309,7 +383,7 @@ function darkStrokes(g, w, h, detail) {
   return { strength, high: byDetail(LOCAL_THRESHOLDS, detail) };
 }
 
-const DETECTORS = { edges: cannyEdges, sketch: dogLines, dark: darkStrokes };
+const DETECTORS = { edges: cannyEdges, sketch: flowDog, dark: darkStrokes };
 
 // Thinning leaves 4-connected staircases whose corners look like junctions; a pixel whose neighbours are all one 8-connected piece is redundant
 function dropCornerPixels(mask, w, h) {

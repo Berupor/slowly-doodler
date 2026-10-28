@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerlines, placementCrop, traceCrop, clipToCanvas } from '../extension/editor/raster.js';
+import { centerlines, placementCrop, traceCrop, clipToCanvas, edgeFlow } from '../extension/editor/raster.js';
 import { W as CW, H as CH, LIMITS } from '../extension/editor/sdj.js';
 
 const W = 120, H = 120;
@@ -157,6 +157,45 @@ describe('photo flat illustration', () => {
     assert.ok(at(90).length && at(220).length, `${lines.length} strokes`);
     for (const l of at(90)) assert.equal(l.color, 'yellow');
     for (const l of at(220)) assert.equal(l.color, 'red');
+  });
+});
+
+const PRESETS = {
+  outline: { mode: 'edges', detail: 30, minLength: 16, maxStrokes: 190, focus: [0.6, 1.6] },
+  sketch: { mode: 'sketch', detail: 70, minLength: 11, maxStrokes: 390 },
+  detailed: DETAILED,
+  scan: { mode: 'dark', detail: 100, minLength: 8, maxStrokes: 540 },
+};
+
+/** @param {number} seed */
+const noise = seed => () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
+
+describe('edgeFlow', () => {
+  it('runs along the rim of a disc', () => {
+    const n = 100, g = new Float32Array(n * n);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) g[y * n + x] = Math.hypot(x - 50, y - 50) < 30 ? 40 : 220;
+    const { tx, ty } = edgeFlow(g, n, n);
+    for (let a = 0; a < 2 * Math.PI; a += Math.PI / 12) {
+      const x = Math.round(50 + 30 * Math.cos(a)), y = Math.round(50 + 30 * Math.sin(a)), i = y * n + x;
+      const radial = Math.abs(tx[i] * Math.cos(a) + ty[i] * Math.sin(a));
+      assert.ok(radial < 0.15, `flow at ${Math.round(a * 180 / Math.PI)} deg crosses the rim: ${radial}`);
+    }
+  });
+});
+
+describe('photo sketch', () => {
+  it('draws a hand-drawn circle on a noisy page as one closed stroke', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    const rnd = noise(7);
+    const data = paint(crop, (x, y) => {
+      const ink = Math.abs(Math.hypot(x - 200, y - 200) - 120) < 2.5, v = (ink ? 60 : 225) + 70 * rnd();
+      return [v, v, v];
+    });
+    const lines = traceCrop(data, crop, { ...PRESETS.sketch, color: 'black', weight: 1 });
+    const ring = lines.map(l => l.pts.map(p => toSource(crop, p))).filter(pts => pts.every(([x, y]) => Math.abs(Math.hypot(x - 200, y - 200) - 120) < 6));
+    assert.equal(ring.length, 1, `${ring.length} pieces on the circle, ${lines.length} strokes in all`);
+    assert.ok(length(ring[0]) > 0.9 * 2 * Math.PI * 120, `${Math.round(length(ring[0]))} traced`);
   });
 });
 
