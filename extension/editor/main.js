@@ -2,6 +2,7 @@ import * as S from './sdj.js';
 import { importSvg } from './import-svg.js';
 import { photoToPolylines, textToPolylines } from './raster.js';
 import * as lib from './library.js';
+import * as P from './precision.js';
 
 const { W, H } = S;
 const NS = 'http://www.w3.org/2000/svg';
@@ -31,7 +32,7 @@ const $ = id => /** @type {HTMLInputElement} */ (document.getElementById(id));
 /** @param {string} id */
 const $g = id => /** @type {SVGGElement} */ (document.querySelector(`#${id}`));
 const board = /** @type {SVGSVGElement} */ (document.querySelector('#board'));
-const ink = $g('ink'), live = $g('live'), ref = $g('ref');
+const ink = $g('ink'), live = $g('live'), ref = $g('ref'), guides = $g('guides');
 const progressBar = /** @type {HTMLProgressElement} */ (document.getElementById('progress'));
 const friendSelect = /** @type {HTMLSelectElement} */ (document.getElementById('friend'));
 /** @type {WeakMap<Element, S.Stroke>} */
@@ -59,7 +60,7 @@ $('dark').checked = isDark();
 /**
  * @typedef {{ strokes: S.Stroke[], palette: S.Palette }} Snapshot
  * @typedef {{ tool: string, color: string, weight: number, startOffset: number, t0: number,
- *   a: [number, number], b: [number, number], dur: number, points: S.Point[] }} Gesture
+ *   a: [number, number], b: [number, number], dur: number, points: S.Point[], brush: [number, number], anchor: number | null }} Gesture
  */
 
 /** @type {S.Stroke[]} */
@@ -69,6 +70,8 @@ let palette = {};
 /** @type {string[]} */
 let customColors = [];
 let tool = 'pen', color = 'black', weight = 3, rainbow = false;
+const prec = P.loadSettings();
+let picking = false;
 let symmetry = 'off';
 /** @type {Snapshot[]} */
 let undoStack = [];
@@ -266,6 +269,28 @@ function eraseAt(e, erased) {
 
 const pxPerUnit = () => board.getScreenCTM()?.a ?? 1;
 
+/** @param {[number, number]} p @returns {[number, number]} */
+const gridPoint = p => prec.snap ? P.snapToGrid(p, prec.spacing) : p;
+
+/** @param {boolean} on */
+function setPicking(on) {
+  picking = on;
+  board.classList.toggle('picking', on);
+}
+
+/** @param {PointerEvent} e */
+function pickAt(e) {
+  setPicking(false);
+  const hits = ERASER_PROBE.map(([dx, dy]) => document.elementFromPoint(e.clientX + dx, e.clientY + dy))
+    .map(el => el && strokeOf.get(el)).filter(s => !!s);
+  const stroke = hits.sort((a, b) => strokes.indexOf(b) - strokes.indexOf(a))[0];
+  if (!stroke) return say('no stroke under the pointer');
+  if (!(stroke.color in S.BASE_COLORS) && stroke.color !== S.CANVAS_TOKEN && !customColors.includes(stroke.color)) customColors.push(stroke.color);
+  color = stroke.color;
+  setWeight(stroke.weight);
+  say(`picked ${stroke.color}, weight ${stroke.weight}`);
+}
+
 /** @param {number} x @param {number} y @param {number} w */
 function setView(x, y, w) {
   w = Math.min(W, Math.max(W / ZOOM_MAX, w));
@@ -340,6 +365,7 @@ board.addEventListener('pointerdown', e => {
     return;
   }
   stopReplay();
+  if (e.altKey || picking) return pickAt(e);
   if (refMove) {
     const p = boardPoint(e);
     refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
@@ -352,8 +378,8 @@ board.addEventListener('pointerdown', e => {
   }
   const now = Date.now();
   sessionStart ??= now - S.endTime(strokes) - (strokes.length ? STROKE_GAP_MS : 0);
-  const p = toCanvas(e);
-  gesture = { tool, color, weight, startOffset: now - sessionStart, t0: e.timeStamp, a: p, b: p, dur: 0, points: [[...p, 0]] };
+  const p = gridPoint(toCanvas(e));
+  gesture = { tool, color, weight, startOffset: now - sessionStart, t0: e.timeStamp, a: p, b: p, dur: 0, points: [[...p, 0]], brush: p, anchor: null };
   renderLive(gesture);
 });
 
@@ -390,10 +416,10 @@ board.addEventListener('pointermove', e => {
     const p = toCanvas(ev);
     const t = Math.max(0, Math.round(ev.timeStamp - gesture.t0));
     if (gesture.tool === 'pen') {
-      const last = gesture.points[gesture.points.length - 1];
-      if ((p[0] !== last[0] || p[1] !== last[1]) && gesture.points.length < S.LIMITS.pointsPerStroke) gesture.points.push([...p, t]);
+      const s = pxPerUnit();
+      P.penMove(gesture, p, t, { radius: P.ropeRadius(prec.smoothing, s), minStep: P.minStepFor(prec.smoothing, s), shift: e.shiftKey });
     } else {
-      gesture.b = p;
+      gesture.b = P.constrainShape(gesture.tool, gesture.a, gridPoint(p), e.shiftKey);
       gesture.dur = Math.max(MIN_SHAPE_MS, t);
     }
   }
@@ -412,7 +438,10 @@ const endPointer = e => {
     const gone = erasing;
     erasing = null;
     if (gone.size) commit(strokes.filter(s => !gone.has(s)));
-  } else if (gesture) finishGesture(gesture);
+  } else if (gesture) {
+    if (gesture.tool === 'pen' && e.type === 'pointerup') P.penEnd(gesture, toCanvas(e), Math.max(0, Math.round(e.timeStamp - gesture.t0)));
+    finishGesture(gesture);
+  }
 };
 board.addEventListener('pointerup', endPointer);
 board.addEventListener('pointercancel', endPointer);
@@ -454,6 +483,7 @@ function buildBars() {
     title: t, on: color === t && tool !== 'eraser', pick: () => { color = t; if (tool === 'eraser') tool = 'pen'; },
   })));
   board.classList.toggle('erasing', tool === 'eraser');
+  setPicking(false);
   showWeight();
 }
 
@@ -801,6 +831,21 @@ $('dark').onchange = () => {
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
 $('rainbow').onchange = () => { rainbow = $('rainbow').checked; };
+$('gridSpacing').replaceChildren(...P.GRID_SPACINGS.map(n => new Option(`${n} units`, String(n))));
+function applyPrecision() {
+  $('smoothing').value = String(prec.smoothing);
+  $('smoothingOut').textContent = String(prec.smoothing);
+  $('gridOn').checked = prec.grid;
+  $('snapOn').checked = prec.snap;
+  $('gridSpacing').value = String(prec.spacing);
+  P.renderGuides(guides, prec.grid ? prec.spacing : 0);
+  P.saveSettings(prec);
+}
+$('smoothing').oninput = () => { prec.smoothing = Number($('smoothing').value); applyPrecision(); };
+$('gridOn').onchange = () => { prec.grid = $('gridOn').checked; applyPrecision(); };
+$('snapOn').onchange = () => { prec.snap = $('snapOn').checked; applyPrecision(); };
+$('gridSpacing').onchange = () => { prec.spacing = Number($('gridSpacing').value); applyPrecision(); };
+applyPrecision();
 $('weight').oninput = () => setWeight(Number($('weight').value));
 $('addColor').onclick = () => {
   const hex = $('customColor').value.toLowerCase();
@@ -958,6 +1003,8 @@ document.addEventListener('keydown', e => {
   } else if (k === ' ') { e.preventDefault(); setSpace(true); }
   else if (ZOOM_KEYS[k]) { e.preventDefault(); zoomCentered(ZOOM_KEYS[k]); }
   else if (k === '0') { e.preventDefault(); setView(0, 0, W); }
+  else if (!e.ctrlKey && !e.metaKey && k === 'i') setPicking(!picking);
+  else if (!e.ctrlKey && !e.metaKey && k === 'g') { prec.grid = !prec.grid; applyPrecision(); }
   else if (!e.ctrlKey && !e.metaKey && TOOL_KEYS[k]) { tool = TOOL_KEYS[k]; buildBars(); }
   else if (k === '[') setWeight(weight - 0.5);
   else if (k === ']') setWeight(weight + 0.5);

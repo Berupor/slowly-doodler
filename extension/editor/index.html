@@ -26,7 +26,7 @@
     </header>
     <div class="paper">
       <svg id="board" viewBox="0 0 720 960" xmlns="http://www.w3.org/2000/svg">
-        <g id="ref"></g><g id="ink"></g><g id="live"></g>
+        <g id="ref"></g><g id="guides"></g><g id="ink"></g><g id="live"></g>
       </svg>
     </div>
     <div class="size-rail drawing-pill" title="Brush size ([ and ])">
@@ -57,6 +57,11 @@
             <select class="custom-select custom-select-sm" id="symmetry"></select>
           </div>
           <div class="field">
+            <label for="smoothing">Smoothing</label>
+            <input type="range" class="custom-range" id="smoothing" min="0" max="100" step="1" value="20">
+            <output id="smoothingOut">20</output>
+          </div>
+          <div class="field">
             <label for="customColor">Colour</label>
             <input type="color" id="customColor" value="#7e57c2">
             <button class="btn btn-outline-light btn-sm" id="addColor">Add to palette</button>
@@ -66,6 +71,25 @@
             <label class="custom-control-label" for="rainbow">Rainbow</label>
           </div>
           <div class="hint">Rainbow cycles the 12 standard colours. Weights other than 1, 3, 6 and custom colours pass the editor's validation but are not verified with the Slowly apps.</div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-header">Grid</div>
+        <div class="card-body">
+          <div class="custom-control custom-switch">
+            <input type="checkbox" class="custom-control-input" id="gridOn">
+            <label class="custom-control-label" for="gridOn">Show grid, centre and thirds</label>
+          </div>
+          <div class="custom-control custom-switch">
+            <input type="checkbox" class="custom-control-input" id="snapOn">
+            <label class="custom-control-label" for="snapOn">Snap to grid</label>
+          </div>
+          <div class="field">
+            <label for="gridSpacing">Spacing</label>
+            <select class="custom-select custom-select-sm" id="gridSpacing"></select>
+          </div>
+          <div class="hint">Snap moves line and ellipse corners and the start of a pen stroke to the nearest grid crossing. The grid is never sent.</div>
         </div>
       </div>
 
@@ -130,6 +154,10 @@
             <dt><kbd>O</kbd></dt><dd>ellipse</dd>
             <dt><kbd>E</kbd></dt><dd>eraser</dd>
             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>weight</dd>
+            <dt><kbd>Shift</kbd> + drag</dt><dd>line at 15° steps, circle, straight pen line</dd>
+            <dt><kbd>Alt</kbd> + click</dt><dd>pick colour and weight from a stroke</dd>
+            <dt><kbd>I</kbd></dt><dd>pick with the next click</dd>
+            <dt><kbd>G</kbd></dt><dd>grid</dd>
             <dt><kbd>Ctrl</kbd> + wheel</dt><dd>zoom at cursor, also pinch</dd>
             <dt><kbd>+</kbd> <kbd>-</kbd></dt><dd>zoom</dd>
             <dt><kbd>0</kbd></dt><dd>fit the page</dd>

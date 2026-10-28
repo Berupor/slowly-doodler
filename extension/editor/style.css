@@ -199,6 +199,12 @@ html:not(.slowly-css) i[data-glyph]::before { content: attr(data-glyph); font-st
 }
 #board { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
 #board.erasing { cursor: cell; }
+#board.picking { cursor: copy; }
+#guides { pointer-events: none; }
+#guides path { fill: none; stroke-width: 1; vector-effect: non-scaling-stroke; }
+#guides .grid { stroke: var(--drawing-ink); opacity: .16; }
+#guides .thirds { stroke: #1e88e5; opacity: .55; stroke-dasharray: 6 4; }
+#guides .centre { stroke: #e53935; opacity: .5; }
 #board.moving { cursor: move; }
 #board.pan { cursor: grab; }
 #board.panning { cursor: grabbing; }
