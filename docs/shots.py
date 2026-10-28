@@ -154,6 +154,7 @@ def run():
                 else:
                     if button.get_attribute('aria-pressed') == 'false': button.click()
                     button.click()
+            if ed.locator('body').evaluate('(_, s) => !!document.querySelector(s).closest("#textPanel")', sel) and ed.locator('#textPanel').is_hidden(): ed.locator('#insertTextBtn').click()
             return ed.locator(sel)
 
         def act(sel, method='click', *args, **kw):

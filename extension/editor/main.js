@@ -650,13 +650,14 @@ board.addEventListener('pointerup', endPointer);
 board.addEventListener('pointercancel', endPointer);
 
 function pillButtons(id, cls, items) {
-  $(id).replaceChildren(...items.map(({ content, on, pick, title }) => {
+  $(id).replaceChildren(...items.map(({ content, on, pick, title, drop }) => {
     const b = document.createElement('button');
     b.append(content);
     b.title = title || '';
     b.className = cls;
     b.setAttribute('aria-pressed', String(!!on));
     b.onclick = () => { pick(); buildBars(); };
+    if (drop) b.oncontextmenu = e => { e.preventDefault(); drop(); buildBars(); };
     return b;
   }));
 }
@@ -676,11 +677,12 @@ function icon(name, glyph) {
   return i;
 }
 
+const addSwatch = $('addColor');
+
 const toolButtons = Object.entries(TOOLS).map(([t, content]) => {
   const b = document.createElement('button');
   b.className = 'drawing-tool-circle';
   b.dataset.tool = t;
-  if (TOOL_OPTIONS[t]) b.dataset.opts = '';
   const key = Object.keys(TOOL_KEYS).find(k => TOOL_KEYS[k] === t)?.toUpperCase();
   b.title = `${t[0].toUpperCase()}${t.slice(1)} (${key})${TOOL_OPTIONS[t] ? ', tap again for options' : ''}`;
   b.append(content());
@@ -703,17 +705,21 @@ function buildBars() {
     b.popoverTargetElement = tool === t && TOOL_OPTIONS[t] ? $(TOOL_OPTIONS[t]) : null;
   }
   $('selectTool').setAttribute('aria-pressed', String(tool === 'select'));
-  const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
-  pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
+  const swatch = (/** @type {string} */ t, /** @type {(() => void) | undefined} */ drop = undefined) => ({
     content: span('drawing-color-swatch', { background: S.entryFor(t, palette)[isDark() ? 'dark' : 'light'] }),
-    title: t, on: color === t && tool !== 'eraser', pick: () => {
+    title: drop ? `${S.entryFor(t, palette).light}, right-click or long-press to remove` : t, on: color === t && tool !== 'eraser', drop, pick: () => {
       color = t;
       if (tool === 'eraser') tool = 'pen';
       if (!pending) return selector.paint(t);
       $('importColors').value = 'one';
       retrace();
     },
-  })));
+  });
+  pillButtons('colors', 'drawing-color-ring', Object.keys(S.BASE_COLORS).map(t => swatch(t)));
+  pillButtons('customColors', 'drawing-color-ring', customColors.map(t => swatch(t, () => { customColors = customColors.filter(c => c !== t); })));
+  $('customColors').append(addSwatch);
+  $('customHead').hidden = !customColors.length;
+  $('colorWarn').hidden = color in S.BASE_COLORS;
   board.classList.toggle('erasing', tool === 'eraser');
   setPicking(false);
   selector.sync(tool);
@@ -1377,7 +1383,7 @@ $('snapOn').onchange = () => { prec.snap = $('snapOn').checked; applyPrecision()
 $('gridSpacing').onchange = () => { prec.spacing = Number($('gridSpacing').value); applyPrecision(); };
 applyPrecision();
 $('weight').oninput = () => setWeight(Number($('weight').value));
-$('addColor').onclick = () => {
+$('customColor').onchange = () => {
   const hex = $('customColor').value.toLowerCase();
   const t = S.customToken(hex);
   palette = { ...palette, [t]: { light: hex, dark: hex } };
@@ -1399,6 +1405,8 @@ $('refFile').onchange = () => {
   img.setAttribute('opacity', $('refOpacity').value);
   img.style.pointerEvents = 'none';
   ref.replaceChildren(img);
+  $('refThumb').setAttribute('src', img.getAttribute('href') || '');
+  $('refRow').hidden = false;
   resetRef();
   $('refFile').value = '';
 };
@@ -1406,7 +1414,7 @@ $('refOpacity').oninput = () => {
   ref.firstElementChild?.setAttribute('opacity', $('refOpacity').value);
   $('refOpacityOut').textContent = Math.round(Number($('refOpacity').value) * 100) + '%';
 };
-$('refClear').onclick = () => { ref.replaceChildren(); setRefMove(false); };
+$('refClear').onclick = () => { ref.replaceChildren(); $('refRow').hidden = true; setRefMove(false); };
 
 function applyRef() {
   const { x, y, rot, flip, scale } = refPose;
@@ -1460,6 +1468,16 @@ $('importColors').onchange = retrace;
 $('importRough').addEventListener('input', () => { $('importRoughOut').textContent = $('importRough').value; retraceSoon(); });
 $('importDone').onclick = finishImport;
 $('importCancel').onclick = cancelImport;
+
+$('insertTextBtn').onclick = () => showInsert(true);
+$('textBack').onclick = () => showInsert(false);
+$('popInsert').addEventListener('beforetoggle', e => { if (/** @type {ToggleEvent} */ (e).newState === 'open') showInsert(false); });
+/** @param {boolean} text */
+function showInsert(text) {
+  $('insertMenu').hidden = text;
+  $('textPanel').hidden = !text;
+  if (text) $('text').focus();
+}
 
 $('textSize').addEventListener('input', () => { $('textSizeOut').textContent = $('textSize').value; });
 $('writeText').onclick = () => $('text').value.trim() ? startImport('text', '', 'Text') : say('type some text first', true);
@@ -1524,7 +1542,7 @@ for (const pop of document.querySelectorAll('.pop')) pop.addEventListener('toggl
   document.querySelector(`[popovertarget=${pop.id}]`)?.classList.toggle('open', /** @type {ToggleEvent} */ (e).newState === 'open');
 });
 $('pick').onclick = () => setPicking(!picking);
-for (const label of /** @type {NodeListOf<HTMLLabelElement>} */ (document.querySelectorAll('label.btn'))) label.onkeydown = e => {
+for (const label of /** @type {NodeListOf<HTMLLabelElement>} */ (document.querySelectorAll('label.btn, label.menu-row'))) label.onkeydown = e => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   e.preventDefault();
   e.stopPropagation();

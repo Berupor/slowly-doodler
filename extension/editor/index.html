@@ -22,7 +22,7 @@
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
     <button class="drawing-icon-button bar-button" id="fullscreen" title="Full screen (Shift+F)" aria-pressed="false"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
-    <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing (hold or right-click for its options)" data-opts><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
+    <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing (hold or right-click for its options)"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
     <button class="drawing-icon-button bar-button" id="moreBtn" popovertarget="popMore" title="More: share, shortcuts, theme"><svg class="svg-icon" style="stroke-width: 3.2" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
     <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
     <button class="drawing-icon-button bar-button" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
@@ -181,13 +181,34 @@
 </div>
 
 <div class="pop" id="popInsert" popover aria-label="Insert">
-  <section class="insert-files">
-    <label class="btn btn-outline-light btn-sm" tabindex="0">Photo<input type="file" id="photoFile" accept="image/*" hidden></label>
-    <label class="btn btn-outline-light btn-sm" tabindex="0">SVG<input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden></label>
-  </section>
-  <div class="hint">Or drop or paste an image or SVG on the canvas. It lands as a preview to place and tune, then Done.</div>
-  <section>
-    <div class="field"><h3>Text</h3><button class="btn btn-primary btn-sm" id="writeText">Write</button></div>
+  <div class="menu" id="insertMenu">
+    <label class="menu-row" tabindex="0">
+      <span class="menu-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9.5h.01"/></svg></span>
+      <span class="menu-text"><span class="menu-title">Photo</span><span class="menu-note">Traced into pen strokes</span></span>
+      <input type="file" id="photoFile" accept="image/*" hidden>
+    </label>
+    <label class="menu-row" tabindex="0">
+      <span class="menu-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8v8H3zM13 8a4 4 0 1 0 8 0 4 4 0 1 0-8 0"/></svg></span>
+      <span class="menu-text"><span class="menu-title">SVG</span><span class="menu-note">Vector file, drawn as strokes</span></span>
+      <input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden>
+    </label>
+    <button class="menu-row" id="insertTextBtn">
+      <span class="menu-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></span>
+      <span class="menu-text"><span class="menu-title">Text</span><span class="menu-note">Written out as pen strokes</span></span>
+    </button>
+    <label class="menu-row" tabindex="0">
+      <span class="menu-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h13v12H3zM8 20h13V9"/></svg></span>
+      <span class="menu-text"><span class="menu-title">Reference image</span><span class="menu-note">Trace over a picture, never sent</span></span>
+      <input type="file" id="refFile" accept="image/*" hidden>
+    </label>
+    <div class="hint">or drop / paste a file on the canvas</div>
+  </div>
+  <div id="textPanel" hidden>
+    <div class="pop-head">
+      <button class="drawing-icon-button menu-back" id="textBack" title="Back" aria-label="Back"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <h3>Text</h3>
+      <button class="btn btn-primary btn-sm" id="writeText">Write</button>
+    </div>
     <textarea class="form-control" id="text" rows="2" placeholder="Hello from far away"></textarea>
     <div class="field">
       <label for="font">Font</label>
@@ -210,31 +231,7 @@
       <input type="range" class="custom-range" id="textSize" min="24" max="140" value="56">
       <output id="textSizeOut">56</output>
     </div>
-  </section>
-  <section>
-    <div class="field">
-      <h3>Reference</h3>
-      <label class="btn btn-outline-light btn-sm" tabindex="0">Choose image<input type="file" id="refFile" accept="image/*" hidden></label>
-      <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
-    </div>
-    <div class="field">
-      <label for="refOpacity">Opacity</label>
-      <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
-      <output id="refOpacityOut">35%</output>
-    </div>
-    <div class="field">
-      <label for="refScale">Scale</label>
-      <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
-      <output id="refScaleOut">1×</output>
-    </div>
-    <div class="field">
-      <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
-      <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
-      <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
-      <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
-    </div>
-    <div class="hint">Shown under the canvas for tracing and never exported; with Move on, dragging moves the image.</div>
-  </section>
+  </div>
 </div>
 
 <div class="pop" id="popGuides" popover aria-label="Canvas guides">
@@ -308,16 +305,43 @@
     </button>
   </div>
   <div class="layer-list" id="layerList" role="listbox" aria-label="Layers, top first"></div>
+  <details class="ref-row" id="refRow" hidden>
+    <summary>
+      <img class="layer-thumb" id="refThumb" alt="">
+      <span class="layer-name">Reference</span>
+      <svg class="svg-icon ref-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <div class="field">
+      <label for="refOpacity">Opacity</label>
+      <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
+      <output id="refOpacityOut">35%</output>
+    </div>
+    <div class="field">
+      <label for="refScale">Scale</label>
+      <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
+      <output id="refScaleOut">1×</output>
+    </div>
+    <div class="ref-actions">
+      <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
+      <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
+      <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
+      <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
+      <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
+    </div>
+  </details>
   <div class="hint">Send flattens visible layers. Hidden layers are not sent.</div>
 </div>
 
 <div class="pop" id="popColor" popover aria-label="Colour">
   <div class="drawing-colors" id="colors"></div>
-  <div class="field custom-color">
-    <input type="color" id="customColor" value="#7e57c2" aria-label="Custom colour">
-    <button class="btn btn-outline-light btn-sm" id="addColor">Add colour</button>
+  <h3 id="customHead" hidden>Custom</h3>
+  <div class="drawing-colors" id="customColors">
+    <label class="drawing-color-ring color-add" id="addColor" title="Add colour">
+      <span class="drawing-color-swatch"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6v12M6 12h12"/></svg></span>
+      <input type="color" id="customColor" value="#7e57c2" aria-label="Add colour">
+    </label>
   </div>
-  <div class="hint">Extra colours and sizes other than 1, 3 and 6 are not verified with the Slowly apps.</div>
+  <div class="hint" id="colorWarn" hidden>Custom colours are not verified with Slowly.</div>
 </div>
 
 <script type="module" src="main.js"></script>
