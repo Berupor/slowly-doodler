@@ -10,7 +10,7 @@ const SNAP_STEP = Math.PI / 12;
 const DUPLICATE_OFFSET = 16;
 const NUDGE = 1, NUDGE_BIG = 10;
 const DRAG_PX = 4, CLICK_PX = 6, LASSO_STEP_PX = 3;
-const PAD_PX = 6, HANDLE_PX = 10, ROTATE_PX = 26, HALO_PX = 6;
+const PAD_PX = 6, HANDLE_PX = 10, ROTATE_PX = 26, HALO_PX = 6, HALO_MAX = 40;
 const COALESCE_MS = 700;
 const NS = 'http://www.w3.org/2000/svg';
 const FLIP_X_ICON = 'M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4';
@@ -302,7 +302,7 @@ export function createSelector(env) {
     bar.hidden = !sel.size || held;
     ghosts.replaceChildren();
     lassoEl.removeAttribute('d');
-    halos = items().map(s => ({ el: svg('path', { class: 'halo', d: S.pathD(s.points) }), weight: s.weight }));
+    halos = held || sel.size > HALO_MAX ? [] : items().map(s => ({ el: svg('path', { class: 'halo', d: S.pathD(s.points) }), weight: s.weight }));
     haloLayer.replaceChildren(...halos.map(h => h.el));
     haloWidths();
     box = bounds(items());
@@ -425,7 +425,7 @@ export function createSelector(env) {
     moved.forEach((s, i) => {
       const path = S.pathD(s.points);
       ghosts.children[i].setAttribute('d', path);
-      halos[i].el.setAttribute('d', path);
+      halos[i]?.el.setAttribute('d', path);
     });
     drawChrome(/** @type {Box} */ (bounds(moved)), false);
   }

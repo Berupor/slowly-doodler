@@ -711,6 +711,7 @@ with sync_playwright() as p:
     check('choosing a file closes the insert popover and opens the import bar', open_pop() is None and import_bar())
     check('the preview is shown but not yet in the drawing', len(S()) == 0 and len(preview()) > 0, (len(S()), len(preview())))
     check('the preview gets no layer before Done', [l['name'] for l in layers()] == names, layers())
+    check('the preview shows its own colours under a frame, no halo', halos() == 0 and page.locator('#sel .handle').count() > 0, halos())
     set_input('importWeight', 5)
     page.wait_for_timeout(500)
     check('the import bar weight sets the weight of the preview', preview() and all(w == '10' for w in preview()), set(preview()))
