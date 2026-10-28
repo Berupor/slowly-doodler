@@ -16,7 +16,18 @@
     editorWarning: '.drawing-dialog .alert-warning',
     restoreConfirm: '.modal-footer .btn-primary',
     stylesheetPath: '/static/css/',
+    composer: '.composer-actions',
+    thumbnailBox: '.drawing-thumbnail',
   };
+  // where the anchor is on screen, every `expect` selector must be too. The native editor's selectors are left to
+  // attach(): that modal shows a loading state first, so absence there is not proof
+  /** @type {{ anchor: string, expect: (keyof typeof SLOWLY)[] }[]} */
+  const MARKUP = [
+    { anchor: SLOWLY.composer, expect: ['opener'] },
+    { anchor: SLOWLY.thumbnailBox, expect: ['thumbnail', 'thumbnailEdit'] },
+  ];
+  const MARKUP_WARNED = 'doodler:markup-warned';
+  const SETTLE_MS = 2000;
   /** @type {HTMLDivElement | null} */
   let overlay = null;
   /** @type {HTMLIFrameElement | null} */
@@ -98,12 +109,19 @@
     else queued.push(msg);
   }
 
-  function frameUrl() {
-    const url = new URL(pageUrl);
+  /** @returns {string[]} */
+  function slowlyStylesheets() {
+    const hrefs = [];
     for (const link of document.querySelectorAll('link[rel=stylesheet]')) {
       const href = new URL(/** @type {HTMLLinkElement} */ (link).href);
-      if (href.origin === location.origin && href.pathname.startsWith(SLOWLY.stylesheetPath)) url.searchParams.append('css', href.href);
+      if (href.origin === location.origin && href.pathname.startsWith(SLOWLY.stylesheetPath)) hrefs.push(href.href);
     }
+    return hrefs;
+  }
+
+  function frameUrl() {
+    const url = new URL(pageUrl);
+    for (const href of slowlyStylesheets()) url.searchParams.append('css', href);
     if (isDark()) url.searchParams.set('theme', 'dark');
     return url.href;
   }
@@ -138,14 +156,14 @@
   /** @param {KeyboardEvent} e */
   function escClose(e) { if (e.key === 'Escape') close(); }
 
-  /** @param {string} text */
-  function toast(text) {
+  /** @param {string} text @param {number} [ms] */
+  function toast(text, ms = 7000) {
     const t = css(document.createElement('div'),
       'position:fixed;right:18px;bottom:84px;z-index:2147483646;padding:12px 16px;border-radius:12px');
     t.className = 'toast show shadow-sm';
     t.textContent = text;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 7000);
+    setTimeout(() => t.remove(), ms);
   }
 
   /** @template T @param {() => T} check @param {number} ms @returns {Promise<T>} */
@@ -205,6 +223,39 @@
       else console.error('doodler_attach_failed', { reason });
       toast(`Could not attach automatically (${reason}). Finish in the Slowly editor.`);
     }
+  }
+
+  /** @type {Map<keyof typeof SLOWLY, number>} */
+  const suspects = new Map();
+  let scanTimer = 0;
+
+  // missing counts only when the anchor is on screen and the element stays absent for SETTLE_MS: the SPA renders in steps
+  function scanMarkup() {
+    scanTimer = 0;
+    /** @type {[keyof typeof SLOWLY, string | undefined][]} */
+    const missing = [];
+    if (document.readyState === 'complete' && !slowlyStylesheets().length) missing.push(['stylesheetPath', undefined]);
+    for (const { anchor, expect } of MARKUP)
+      if (document.querySelector(anchor))
+        for (const name of expect) if (!document.querySelector(SLOWLY[name])) missing.push([name, anchor]);
+    const now = Date.now();
+    for (const name of suspects.keys()) if (!missing.some(m => m[0] === name)) suspects.delete(name);
+    for (const [name] of missing) if (!suspects.has(name)) suspects.set(name, now);
+    const due = missing.filter(([name]) => now - (suspects.get(name) ?? now) >= SETTLE_MS);
+    if (due.length) {
+      for (const [name, anchor] of due) console.error('doodler_selector_missing', { selector: SLOWLY[name], anchor });
+      toast('Slowly changed its page, Doodler may not attach drawings. Copy the JSON from the JSON tab as a fallback.', 20000);
+      sessionStorage.setItem(MARKUP_WARNED, '1');
+      markupObserver.disconnect();
+    } else if (suspects.size) scanTimer = window.setTimeout(scanMarkup, SETTLE_MS + 100);
+  }
+
+  const scheduleScan = () => { if (!scanTimer) scanTimer = window.setTimeout(scanMarkup, 1000); };
+  const markupObserver = new MutationObserver(scheduleScan);
+  if (!sessionStorage.getItem(MARKUP_WARNED)) {
+    markupObserver.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('load', scheduleScan);
+    scheduleScan();
   }
 
   window.addEventListener('message', e => {
