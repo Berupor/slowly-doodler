@@ -315,6 +315,84 @@ describe('drawn art', () => {
   });
 });
 
+describe('sketch hatching', () => {
+  const HATCH = { ...PRESETS.sketch, hatch: true, color: 'black', weight: 1 };
+  const PAPER = [250, 249, 245];
+  const photo = (/** @type {number} */ size, /** @type {(x: number, y: number) => number} */ grey, grain = 80) => {
+    const crop = placementCrop(size, size);
+    assert.ok(crop);
+    const rnd = noise(5);
+    const data = paint(crop, (x, y) => [grey(x, y) + 30 * Math.sin(x / 40) + grain * rnd(), grey(x, y) + 30 * Math.sin(y / 35) + grain * rnd(), grey(x, y) + grain * rnd()]);
+    assert.equal(isDrawnArt(data, crop.w, crop.h), false);
+    return { crop, data };
+  };
+  const strokeKey = (/** @type {{ pts: number[][], color: string }} */ l) => JSON.stringify(l);
+  const hatchOnly = (/** @type {Uint8ClampedArray} */ data, /** @type {NonNullable<ReturnType<typeof placementCrop>>} */ crop, extra = {}) => {
+    const lines = new Set(traceCrop(data, crop, { ...HATCH, ...extra, hatch: false }).map(strokeKey));
+    const all = traceCrop(data, crop, { ...HATCH, ...extra });
+    return { all, lines, hatch: all.filter(l => !lines.has(strokeKey(l))).map(l => l.pts.map(p => toSource(crop, p))) };
+  };
+  const segments = (/** @type {number[][][]} */ paths) => paths.flatMap(p => p.slice(1).map((q, i) => [p[i], q]));
+
+  it('hatches darker bands of a photo more densely and leaves the light band bare', () => {
+    const bands = [235, 150, 95, 40];
+    const { crop, data } = photo(400, x => bands[Math.min(3, Math.floor(x / 100))]);
+    const ink = [0, 0, 0, 0];
+    for (const [a, b] of segments(hatchOnly(data, crop).hatch)) {
+      const x = (a[0] + b[0]) / 2, band = Math.floor(x / 100);
+      if (Math.abs(x - (band + 0.5) * 100) < 40) ink[band] += Math.hypot(b[0] - a[0], b[1] - a[1]);
+    }
+    assert.ok(ink[0] < 0.05 * ink[3], `ink per band ${ink.map(Math.round)}`);
+    assert.ok(ink[1] > 0 && ink[1] < ink[2] && ink[2] < ink[3], `ink per band ${ink.map(Math.round)}`);
+  });
+
+  it('keeps the hatching of a dark shape in drawn art inside its outline, in the colour of the shape', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    const disc = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 200, y - 200) < 120;
+    const data = paint(crop, (x, y) => disc(x, y) ? [20, 20, 20] : PAPER);
+    const { all, hatch } = hatchOnly(data, crop);
+    assert.ok(hatch.length >= 10, `${hatch.length} hatch strokes`);
+    for (const pts of hatch) for (const [x, y] of pts) assert.ok(Math.hypot(x - 200, y - 200) < 119, `${x} ${y} is off the shape`);
+    assert.ok(all.every(l => l.color === 'black'), JSON.stringify([...new Set(all.map(l => l.color))]));
+  });
+
+  it('leaves light shapes in drawn art unhatched', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    const data = paint(crop, (x, y) => Math.hypot(x - 200, y - 200) < 120 ? [235, 225, 150] : PAPER);
+    assert.equal(hatchOnly(data, crop).hatch.length, 0);
+  });
+
+  it('keeps every line and stays within the budget', () => {
+    const { crop, data } = photo(600, (x, y) => 40 + 30 * Math.sin(x / 9) * Math.sin(y / 13));
+    const maxStrokes = 300, { all, lines, hatch } = hatchOnly(data, crop, { maxStrokes });
+    const kept = new Set(all.map(strokeKey));
+    assert.ok([...lines].every(l => kept.has(l)), 'a line went missing');
+    assert.ok(hatch.length > 0 && hatch.length <= 0.4 * maxStrokes, `${hatch.length} hatch strokes`);
+    assert.ok(all.length <= LIMITS.strokes && all.reduce((n, l) => n + l.pts.length, 0) <= LIMITS.points);
+  });
+
+  it('follows the run of an oriented texture', () => {
+    const angle = 20 * Math.PI / 180, [dx, dy] = [Math.cos(angle), Math.sin(angle)];
+    const { crop, data } = photo(400, (x, y) => 70 + 40 * Math.sin((-x * dy + y * dx) / 2.5), 30);
+    let error = 0, total = 0;
+    for (const [a, b] of segments(hatchOnly(data, crop).hatch)) {
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]), cos = Math.abs((b[0] - a[0]) * dx + (b[1] - a[1]) * dy) / (len || 1);
+      error += Math.acos(Math.min(1, cos)) * len;
+      total += len;
+    }
+    assert.ok(total > 1000, `${Math.round(total)} hatched`);
+    assert.ok(error / total < 15 * Math.PI / 180, `mean error ${Math.round(error / total * 180 / Math.PI)} degrees`);
+  });
+
+  it('draws nothing on a white image', () => {
+    const crop = placementCrop(400, 400);
+    assert.ok(crop);
+    assert.equal(traceCrop(paint(crop, () => [255, 255, 255]), crop, HATCH).length, 0);
+  });
+});
+
 describe('clipToCanvas', () => {
   it('splits a line that leaves and re-enters the canvas at the crossings', () => {
     const pieces = clipToCanvas([[100, 100], [-100, 100], [-100, 200], [100, 200]]);

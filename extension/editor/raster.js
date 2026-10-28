@@ -79,6 +79,23 @@ const PAPER_LIGHTNESS = 85;
 const PAPER_CHROMA = 15;
 const BLOB_ASPECT = 3;
 const DARK_LINE = 0, LIGHT_LINE = 1, TINT_LINE = 2;
+const HATCH_FLOW_SIGMA = 6;
+const HATCH_COHERENT = 0.6;
+const HATCH_TONE_SIGMA = 4;
+const HATCH_TONES = [120, 80, 45];
+const HATCH_ART_TONES = [65, 45];
+const HATCH_SPACING = 5;
+const HATCH_MIN_SPACING = 4;
+const HATCH_TEST = 0.5;
+const HATCH_SEED = 0.9;
+const HATCH_MIN_LENGTH = 3;
+const HATCH_STEP_COS = 0.9;
+const HATCH_TURN_COS = 0.6;
+const HATCH_SHARE = 0.4;
+const HATCH_COARSEN = 1.25;
+const HATCH_FALLOFF = 1.5;
+const HATCH_TRIES = 4;
+const HATCH_MIN_DETAIL = 40;
 
 function thin(img, w, h) {
   const del = [];
@@ -1145,7 +1162,7 @@ function regionStrokes(data, w, h, blurred, opts) {
       : [0, 1, 2].map(c => st.pts.reduce((a, [x, y]) => a + rgb[c][darkest(x, y)], 0) / st.pts.length);
     return { ...st, ink };
   });
-  return [...borders, ...lines];
+  return { strokes: [...borders, ...lines], labels, centres, colourOf };
 }
 
 /**
@@ -1265,8 +1282,179 @@ export function centerlines(mask, w, h) {
 }
 
 /**
+ * Hatching direction: the edge flow where its coherence passes HATCH_COHERENT, a 45 degree slant where it falls short; summed as
+ * doubled angles, so opposite tangents agree. Without g, the slant everywhere.
+ * @param {Float32Array | null} g @param {number} w @param {number} h
+ */
+function hatchFlow(g, w, h) {
+  const hx = new Float32Array(w * h), hy = new Float32Array(w * h);
+  if (!g) return { hx: hx.fill(Math.SQRT1_2), hy: hy.fill(-Math.SQRT1_2) };
+  const { tx, ty, coherence } = edgeFlow(g, w, h, HATCH_FLOW_SIGMA);
+  for (let i = 0; i < hx.length; i++) {
+    const c = (coherence[i] / HATCH_COHERENT) ** 4, angle = Math.atan2(2 * c * tx[i] * ty[i] - 1, c * (tx[i] * tx[i] - ty[i] * ty[i])) / 2;
+    hx[i] = Math.cos(angle); hy[i] = Math.sin(angle);
+  }
+  return { hx, hy };
+}
+
+/** @param {number} w @param {number} h @param {number} cell at least the largest distance asked of near */
+function pointGrid(w, h, cell) {
+  const cols = Math.ceil(w / cell) + 1, rows = Math.ceil(h / cell) + 1;
+  const cells = Array.from({ length: cols * rows }, () => /** @type {number[]} */ ([]));
+  return {
+    add(/** @type {number[][]} */ pts) { for (const [x, y] of pts) cells[Math.floor(y / cell) * cols + Math.floor(x / cell)].push(x, y); },
+    near(/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ r) {
+      const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
+      for (let j = Math.max(0, cy - 1); j <= Math.min(rows - 1, cy + 1); j++)
+        for (let i = Math.max(0, cx - 1); i <= Math.min(cols - 1, cx + 1); i++) {
+          const c = cells[j * cols + i];
+          for (let k = 0; k < c.length; k += 2) if ((c[k] - x) ** 2 + (c[k + 1] - y) ** 2 < r * r) return true;
+        }
+      return false;
+    },
+  };
+}
+
+/**
+ * Evenly spaced streamlines (Jobard and Lefer 1997): each line is seeded a spacing away from the ones before and stops
+ * where it leaves the allowed pixels, turns away from its start or comes within HATCH_TEST of a spacing to another line; lines under HATCH_MIN_LENGTH spacings are dropped.
+ * @param {{ hx: Float32Array, hy: Float32Array }} flow @param {(i: number) => boolean} allowed
+ * @param {number} w @param {number} h @param {number} spacing @param {ReturnType<typeof pointGrid>} grid
+ */
+function streamlines({ hx, hy }, allowed, w, h, spacing, grid) {
+  const out = [], queue = [], test = spacing * HATCH_TEST;
+  const at = (/** @type {number} */ x, /** @type {number} */ y) => Math.min(h - 1, Math.max(0, Math.round(y))) * w + Math.min(w - 1, Math.max(0, Math.round(x)));
+  const inBounds = (/** @type {number} */ x, /** @type {number} */ y) => x >= 0 && y >= 0 && x <= w - 1 && y <= h - 1;
+  const along = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ dx, /** @type {number} */ dy) => {
+    const i = at(x, y), s = hx[i] * dx + hy[i] * dy < 0 ? -1 : 1;
+    return [s * hx[i], s * hy[i]];
+  };
+  const half = (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ dx, /** @type {number} */ dy) => {
+    const pts = [], [sx, sy] = [dx, dy];
+    for (let n = 0; n < w + h; n++) {
+      const [mx, my] = along(x, y, dx, dy), [ux, uy] = along(x + mx / 2, y + my / 2, mx, my), nx = x + ux, ny = y + uy;
+      if (ux * dx + uy * dy < HATCH_STEP_COS || ux * sx + uy * sy < HATCH_TURN_COS) break;
+      if (!inBounds(nx, ny) || !allowed(at(nx, ny)) || grid.near(nx, ny, test)) break;
+      pts.push([x = nx, y = ny]);
+      dx = ux; dy = uy;
+    }
+    return pts;
+  };
+  const lineFrom = (/** @type {number} */ x, /** @type {number} */ y) => {
+    if (!inBounds(x, y)) return;
+    const seed = at(x, y);
+    if (!allowed(seed) || grid.near(x, y, spacing * HATCH_SEED)) return;
+    const pts = [...half(x, y, -hx[seed], -hy[seed]).reverse(), [x, y], ...half(x, y, hx[seed], hy[seed])];
+    if (pathLength(pts) < HATCH_MIN_LENGTH * spacing) return;
+    grid.add(pts);
+    out.push({ pts, closed: false });
+    for (let k = 0; k < pts.length; k += Math.max(1, Math.round(spacing / 2))) {
+      const [px, py] = pts[k], i = at(px, py);
+      queue.push([px - spacing * hy[i], py + spacing * hx[i]], [px + spacing * hy[i], py - spacing * hx[i]]);
+    }
+  };
+  for (let y = spacing / 2; y < h; y += spacing)
+    for (let x = spacing / 2; x < w; x += spacing) {
+      lineFrom(x, y);
+      for (let k = 0; k < queue.length; k++) lineFrom(queue[k][0], queue[k][1]);
+      queue.length = 0;
+    }
+  return out;
+}
+
+/** @param {number[][][]} paths in trace pixels @param {number} w @param {number} h */
+function rasterPaths(paths, w, h) {
+  const mask = new Uint8Array(w * h);
+  for (const pts of paths)
+    for (let k = 1; k < pts.length; k++) {
+      const [ax, ay] = pts[k - 1], [bx, by] = pts[k], steps = Math.ceil(2 * Math.hypot(bx - ax, by - ay)) || 1;
+      for (let s = 0; s <= steps; s++) {
+        const x = Math.round(ax + (bx - ax) * s / steps), y = Math.round(ay + (by - ay) * s / steps);
+        if (x >= 0 && y >= 0 && x < w && y < h) mask[y * w + x] = 1;
+      }
+    }
+  return mask;
+}
+
+/**
+ * Tone levels to hatch, 0 for none to 3 for cross-hatching, from blurred brightness in a photo and from the blurred
+ * lightness of the colour regions in drawn art, where texture inside a mass blurs into its tone. Art is hatched at a
+ * fixed slant and kept a pen width off paper and off the drawn lines, so hatching stops short of every outline.
+ * @param {Uint8ClampedArray} data @param {number} w @param {number} h
+ * @param {{ labels: Int32Array, centres: number[][] } | null} regions @param {number[][][]} drawn @param {number} inset
+ */
+function hatchTones(data, w, h, regions, drawn, inset) {
+  const n = w * h, level = new Uint8Array(n);
+  if (!regions) {
+    const g = grayscale(data, w, h);
+    stretchLevels(g);
+    const tone = coarseGaussian(g, w, h, HATCH_TONE_SIGMA);
+    for (let i = 0; i < n; i++) level[i] = HATCH_TONES.filter(t => tone[i] < t).length;
+    return withCross(level, hatchFlow(g, w, h));
+  }
+  const { labels, centres } = regions, paper = centres.map(isPaper);
+  const blocked = rasterPaths(drawn, w, h), lightness = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    lightness[i] = paper[labels[i]] ? 100 : centres[labels[i]][0];
+    if (paper[labels[i]]) blocked[i] = 1;
+  }
+  const tone = coarseGaussian(lightness, w, h, HATCH_TONE_SIGMA), off = dilate(blocked, w, h, inset);
+  for (let i = 0; i < n; i++) if (!off[i]) level[i] = HATCH_ART_TONES.filter(t => tone[i] < t).length;
+  return withCross(level, hatchFlow(null, w, h));
+}
+
+/** @param {Uint8Array} level @param {{ hx: Float32Array, hy: Float32Array }} flow */
+const withCross = (level, flow) => ({ level, flow, cross: { hx: flow.hy.map(v => -v), hy: flow.hx } });
+
+/** @param {ReturnType<typeof hatchTones>} tones @param {number} w @param {number} h @param {number} spacing */
+function hatchLines({ level, flow, cross }, w, h, spacing) {
+  const parallel = pointGrid(w, h, spacing), crossing = pointGrid(w, h, spacing / 2);
+  const allowed = (/** @type {number} */ min) => (/** @type {number} */ i) => level[i] >= min;
+  return [
+    ...streamlines(flow, allowed(1), w, h, spacing, parallel),
+    ...streamlines(flow, allowed(2), w, h, spacing / 2, parallel),
+    ...streamlines(cross, allowed(3), w, h, spacing / 2, crossing),
+  ];
+}
+
+/**
+ * The colour a hatch line shades: in art the region most of it runs over, in a photo the mean colour under it.
+ * @param {number[][]} pts @param {number} w @param {{ labels: Int32Array, colourOf: number[][] } | null} regions @param {Float32Array[]} blurred
+ */
+function hatchInk(pts, w, regions, blurred) {
+  const at = pts.map(([x, y]) => Math.round(y) * w + Math.round(x));
+  if (!regions) return blurred.map(c => at.reduce((a, i) => a + c[i], 0) / at.length);
+  const tally = new Map();
+  for (const i of at) tally.set(regions.labels[i], (tally.get(regions.labels[i]) || 0) + 1);
+  return regions.colourOf[[...tally].reduce((a, b) => b[1] > a[1] ? b : a)[0]];
+}
+
+/**
+ * Hatching that fits room [strokes, points], coarser each time it does not: the count falls about as spacing to the
+ * power HATCH_FALLOFF, so the next spacing aims at the room, at least HATCH_COARSEN wider.
+ * @param {ReturnType<typeof hatchTones>} tones @param {number} w @param {number} h @param {number} pen @param {number[]} room
+ */
+function hatching(tones, w, h, pen, [strokes, points]) {
+  let out = [];
+  for (let k = 0, spacing = Math.max(HATCH_MIN_SPACING, HATCH_SPACING * pen); k < HATCH_TRIES; k++) {
+    out = hatchLines(tones, w, h, spacing).map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, false), false) }));
+    const over = Math.max(out.length / Math.max(1, strokes), out.reduce((a, s) => a + s.pts.length, 0) / Math.max(1, points));
+    if (over <= 1) return out;
+    spacing *= Math.max(HATCH_COARSEN, over ** (1 / HATCH_FALLOFF));
+  }
+  const kept = [];
+  let used = 0;
+  for (const s of out.sort((a, b) => pathLength(b.pts) - pathLength(a.pts))) {
+    if (kept.length >= strokes || used + s.pts.length > points) break;
+    kept.push(s);
+    used += s.pts.length;
+  }
+  return kept;
+}
+
+/**
  * @typedef {{ mode?: string, detail?: number, minLength?: number, maxStrokes?: number, color: string, weight: number, photoColors?: boolean,
- *   place?: number[], focus?: number[] | null, seeds?: number[] }} PhotoOptions
+ *   place?: number[], focus?: number[] | null, seeds?: number[], hatch?: boolean }} PhotoOptions
  * minLength is in trace pixels of the fitted placement; place is the matrix the user moved and scaled the import by.
  * focus [background, subject] scales edge strength by the importance map, from the first factor where nothing stands
  * out to the second on the subject. seeds [factor, weak] scales the hysteresis threshold that starts a line and sets
@@ -1301,20 +1489,25 @@ function photoStrokes(data, w, h, { mode, detail, focus, seeds }) {
  * @param {Uint8ClampedArray} data RGBA of the crop at the trace size @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {PhotoOptions} opts
  */
 export function traceCrop(data, { w, h, toCanvas, enlarged }, {
-  mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, focus = null, seeds = [1, WEAK_RATIO],
+  mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, focus = null, seeds = [1, WEAK_RATIO], hatch = false,
 }) {
   const pen = STROKE_SCALE * weight / Math.sqrt(Math.abs(toCanvas[0] * toCanvas[3] - toCanvas[1] * toCanvas[2]));
   const blurred = blurredColour(data, w, h);
-  const { linked, high } = isDrawnArt(data, w, h, blurred)
-    ? {
-      linked: regionStrokes(data, w, h, blurred, {
-        colours: Math.round(byDetail(REGION_COLOURS, detail)), minArea: byDetail(REGION_MIN_AREA, detail) / enlarged ** 2, radius: Math.max(LINE_MIN_RADIUS, Math.round(pen)), lineContrast: byDetail(LINE_CONTRAST, detail),
-      }),
-      high: REGION_MERGE_DE / WEAK_STROKE_FACTOR,
-    }
-    : photoStrokes(data, w, h, { mode, detail, focus, seeds });
-  const strokes = drawingOrder(withinBudget(linked, minLength / enlarged, high, maxStrokes)
-    .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
+  const regions = isDrawnArt(data, w, h, blurred)
+    ? regionStrokes(data, w, h, blurred, {
+      colours: Math.round(byDetail(REGION_COLOURS, detail)), minArea: byDetail(REGION_MIN_AREA, detail) / enlarged ** 2, radius: Math.max(LINE_MIN_RADIUS, Math.round(pen)), lineContrast: byDetail(LINE_CONTRAST, detail),
+    })
+    : null;
+  const { linked, high } = regions ? { linked: regions.strokes, high: REGION_MERGE_DE / WEAK_STROKE_FACTOR } : photoStrokes(data, w, h, { mode, detail, focus, seeds });
+  const lines = withinBudget(linked, minLength / enlarged, high, maxStrokes)
+    .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) }));
+  const used = lines.reduce((a, s) => a + s.pts.length, 0);
+  const room = [Math.min(Math.round(HATCH_SHARE * maxStrokes), LIMITS.strokes - lines.length), Math.min(HATCH_SHARE * LIMITS.points, LIMITS.points - used)];
+  const shading = hatch && (!regions || detail >= HATCH_MIN_DETAIL)
+    ? hatching(hatchTones(data, w, h, regions, lines.map(st => st.pts), Math.ceil(pen) + 1), w, h, pen, room)
+      .map(({ pts }) => ({ pts, closed: false, ink: hatchInk(pts, w, regions, blurred) }))
+    : [];
+  const strokes = [...drawingOrder(lines), ...drawingOrder(shading)];
   return strokes.flatMap(({ pts, closed, ink: own }) => {
     const ink = photoColors ? nearestBase(own || (closed && insideColour(data, w, h, pts)) || inkColour(data, w, h, pts)) : color;
     return clipToCanvas(pts.map(([x, y]) => applyMatrix(toCanvas, x, y))).map(piece => ({ color: ink, weight, pts: piece }));
