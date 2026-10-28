@@ -15,6 +15,7 @@ export const BASE_COLORS = {
 export const CANVAS_TOKEN = 'canvas';
 export const CANVAS_ENTRY = { light: '#ffffff', dark: '#2a2f39' };
 export const SIZES = [1, 3, 6];
+// Slowly's web editor refuses new strokes at these counts (strokes, pointsPerStroke, points); the server side is untested
 export const LIMITS = { strokes: 1000, pointsPerStroke: 19999, points: 249998, palette: 32, minWeight: 0.5, maxWeight: 8 };
 export const STROKE_SCALE = 2;
 export const SEND_SIMPLIFY_EPS = 0.25;
