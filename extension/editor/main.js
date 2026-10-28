@@ -1547,6 +1547,10 @@ document.addEventListener('fullscreenchange', () => {
   $('fullscreen').setAttribute('aria-pressed', String(on));
 });
 window.addEventListener('resize', () => { setView(view.x, view.y, view.w); showWeight(); });
+new ResizeObserver(([e]) => {
+  document.documentElement.style.setProperty('--dock-h', `${e.borderBoxSize[0].blockSize}px`);
+  setView(view.x, view.y, view.w);
+}).observe($('importBar'));
 document.addEventListener('keyup', e => {
   if (e.key !== ' ') return;
   setSpace(false);

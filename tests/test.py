@@ -331,7 +331,9 @@ with sync_playwright() as p:
     act('#clear', 'click')
     act('#dark', 'uncheck', force=True)
     U = box['width'] / 720
-    def cv(x, y): return (box['x'] + x * U, box['y'] + y * U)
+    def cv(x, y):
+        b = page.locator('#board').bounding_box()
+        return (b['x'] + x * b['width'] / 720, b['y'] + y * b['width'] / 720)
     def mouse_path(pts, shift=False):
         if shift: page.keyboard.down('Shift')
         page.mouse.move(*cv(*pts[0])); page.mouse.down()
@@ -712,6 +714,9 @@ with sync_playwright() as p:
     check('the preview is shown but not yet in the drawing', len(S()) == 0 and len(preview()) > 0, (len(S()), len(preview())))
     check('the preview gets no layer before Done', [l['name'] for l in layers()] == names, layers())
     check('the preview shows its own colours under a frame, no halo', halos() == 0 and page.locator('#sel .handle').count() > 0, halos())
+    paper_bottom = page.evaluate('document.querySelector(".paper").getBoundingClientRect().bottom')
+    bar_top = page.evaluate('document.getElementById("importBar").getBoundingClientRect().top')
+    check('the import bar does not cover the paper', paper_bottom <= bar_top, (paper_bottom, bar_top))
     set_input('importWeight', 5)
     page.wait_for_timeout(500)
     check('the import bar weight sets the weight of the preview', preview() and all(w == '10' for w in preview()), set(preview()))
