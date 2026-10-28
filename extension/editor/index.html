@@ -223,8 +223,17 @@
         <div class="card-body">
           <div class="input-group input-group-sm">
             <input type="text" class="form-control" id="libName" placeholder="Name">
-            <div class="input-group-append"><button class="btn btn-primary" id="libSave">Save</button></div>
+            <div class="input-group-append">
+              <button class="btn btn-primary" id="libUpdate" hidden>Update</button>
+              <button class="btn btn-primary" id="libSave">Save</button>
+            </div>
           </div>
+          <div class="hint" id="libOpened" hidden></div>
+          <div class="field">
+            <button class="btn btn-outline-light btn-sm" id="libExport">Export all</button>
+            <label class="btn btn-outline-light btn-sm">Import<input type="file" id="libImport" accept=".json,application/json" hidden></label>
+          </div>
+          <div class="hint">Drawings live in this browser only and are deleted with the extension. Export a backup now and then.</div>
         </div>
       </div>
       <div class="grid" id="libList"></div>

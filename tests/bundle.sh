@@ -10,7 +10,7 @@ echo '(async () => {'
 echo 'const S = (() => {'; sed 's/^export //' "$R/sdj.js"; echo 'return { W, H, BASE_COLORS, CANVAS_TOKEN, CANVAS_ENTRY, SIZES, LIMITS, STROKE_SCALE, r2, baseEntry, customToken, entryFor, isStandard, pathD, endTime, buildSdj, validate, timed, nearestWeight, hexToRgb, rgbToHex, nearestBase }; })();'
 echo 'const { importSvg } = (() => { const { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, nearestWeight } = S;'; sed '/^import /d;s/^export //' "$R/import-svg.js"; echo 'return { importSvg }; })();'
 echo 'const { photoToPolylines, textToPolylines } = (() => { const { W, H, LIMITS, nearestBase } = S;'; sed '/^import /d;s/^export //' "$R/raster.js"; echo 'return { photoToPolylines, textToPolylines }; })();'
-echo 'const lib = (() => {'; sed 's/^export //' "$R/library.js"; echo 'return { listDrawings, saveDrawing, removeDrawing, loadWorking, saveWorking }; })();'
+echo 'const lib = (() => {'; sed 's/^export //' "$R/library.js"; echo 'return { listDrawings, saveDrawing, updateDrawing, removeDrawing, importDrawings, exportFile, loadWorking, saveWorking }; })();'
 sed '/^import /d' "$R/main.js"
 echo 'window.__doodler = { get strokes() { return strokes; }, importSvg, photoToPolylines, S };'
 echo '})();'

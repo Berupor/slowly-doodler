@@ -239,8 +239,14 @@ body.busy [data-panel=import] :is(button, select, input, label.btn) { pointer-ev
 .card svg { display: block; width: 100%; aspect-ratio: 3 / 4; background: var(--drawing-background); border-bottom: 1px solid var(--card-line); }
 .card .meta { padding: 8px 10px; font-size: 12px; }
 .card .meta span:first-child { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .actions { display: flex; gap: 4px; padding: 0 8px 8px; }
-.card .actions .btn { flex: 1; padding: .125rem .25rem; font-size: 12px; }
+.card .meta .name { cursor: text; }
+.card .meta .name:hover { text-decoration: underline dotted; }
+.card .meta input { width: 100%; margin-bottom: 2px; }
+.card .actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; }
+.card .actions .btn { flex: 1 0 40%; padding: .125rem .25rem; font-size: 12px; }
+.grid .card.current { border-color: var(--primary); }
+.input-group-append > .btn:not(:last-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.input-group-append > .btn + .btn { margin-left: -1px; }
 
 @media (max-width: 900px) {
   body { overflow: auto; }

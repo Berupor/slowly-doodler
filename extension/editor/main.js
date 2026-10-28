@@ -600,17 +600,58 @@ function thumbnail(sdj) {
 const libOp = (label, fn) => (/** @type {any[]} */ ...a) => new Promise(r => r(fn(...a))).catch(err => say(`${label} failed: ${err.message}`, true));
 const showLibrary = libOp('library', async () => renderLibrary(await lib.listDrawings()));
 
+/** @type {import('./library.js').LibItem[]} */
+let libItems = [];
+/** @type {string | null} */
+let openedId = null;
+
+function syncSaveBar() {
+  const item = libItems.find(i => i.id === openedId);
+  openedId = item?.id ?? null;
+  $('libUpdate').hidden = !item;
+  $('libOpened').hidden = !item;
+  $('libOpened').textContent = item ? `Editing "${item.name}". Update replaces it, Save as new keeps both.` : '';
+  $('libSave').textContent = item ? 'Save as new' : 'Save';
+  $('libSave').className = `btn ${item ? 'btn-outline-light' : 'btn-primary'}`;
+}
+
+const fileName = (/** @type {string} */ name) => name.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'drawing';
+
+/** @param {import('./library.js').LibItem[]} items */
 function renderLibrary(items) {
+  libItems = items;
+  syncSaveBar();
   if (!items.length) {
     $('libList').replaceChildren(span('hint', {}, 'Nothing saved yet.'));
     return;
   }
   $('libList').replaceChildren(...items.map(item => {
     const card = document.createElement('div');
-    card.className = 'card shadow-sm';
+    card.className = item.id === openedId ? 'card shadow-sm current' : 'card shadow-sm';
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.append(span('', {}, item.name),
+    const title = span('name', {}, item.name);
+    title.tabIndex = 0;
+    title.title = 'Click to rename';
+    const editName = () => {
+      const input = Object.assign(document.createElement('input'), { className: 'form-control form-control-sm', value: item.name });
+      let done = false;
+      const finish = (/** @type {boolean} */ save) => {
+        if (done) return;
+        done = true;
+        const name = input.value.trim();
+        renderLibrary(libItems);
+        if (save && name && name !== item.name) libOp('rename', async () => renderLibrary(await lib.updateDrawing(item.id, { name })))();
+      };
+      input.onkeydown = e => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+      input.onblur = () => finish(true);
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+    };
+    title.onclick = editName;
+    title.onkeydown = e => { if (e.key === 'Enter') editName(); };
+    meta.append(title,
       span('hint', {}, `${new Date(item.savedAt).toLocaleDateString()} · ${item.sdj.strokes.length} strokes`));
     const actions = document.createElement('div');
     actions.className = 'actions';
@@ -621,8 +662,9 @@ function renderLibrary(items) {
       b.onclick = libOp(label.toLowerCase(), fn);
       actions.append(b);
     };
-    act('Open', () => { useSdj(item.sdj); say(`opened "${item.name}"`); });
+    act('Open', () => { useSdj(item.sdj); openedId = item.id; renderLibrary(libItems); say(`opened "${item.name}"`); });
     act('Add', () => { useSdj(item.sdj, { append: true }); say(`added "${item.name}"`); });
+    act('Download', () => lib.exportFile(`${fileName(item.name)}.doodler.json`, [item]));
     act('Delete', async e => {
       if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = 'Sure?'; return; }
       renderLibrary(await lib.removeDrawing(item.id));
@@ -729,9 +771,35 @@ for (const id of ['font', 'textSize', 'textAlign']) $(id).addEventListener('inpu
 $('libSave').onclick = libOp('save', async () => {
   if (!strokes.length) return say('nothing to save', true);
   const name = $('libName').value.trim() || new Date().toLocaleString();
-  renderLibrary(await lib.saveDrawing(name, S.buildSdj(strokes, palette)));
+  const items = await lib.saveDrawing(name, S.buildSdj(strokes, palette));
+  openedId = items[0].id;
+  renderLibrary(items);
   $('libName').value = '';
   say(`saved "${name}"`);
+});
+$('libUpdate').onclick = libOp('update', async () => {
+  if (!strokes.length) return say('nothing to save', true);
+  const name = $('libName').value.trim();
+  const id = String(openedId);
+  const items = await lib.updateDrawing(id, { sdj: S.buildSdj(strokes, palette), savedAt: Date.now(), ...(name && { name }) });
+  renderLibrary(items);
+  $('libName').value = '';
+  say(`updated "${items.find(i => i.id === id)?.name}"`);
+});
+$('libExport').onclick = libOp('export', async () => {
+  const items = await lib.listDrawings();
+  if (!items.length) return say('nothing to export', true);
+  lib.exportFile(`doodler-library-${new Date().toISOString().slice(0, 10)}.json`, items);
+  say(`exported ${items.length}`);
+});
+$('libImport').onchange = libOp('import', async (/** @type {Event} */ e) => {
+  const input = /** @type {HTMLInputElement} */ (e.target);
+  const f = input.files?.[0];
+  input.value = '';
+  if (!f) return;
+  const { items, added, skipped } = await lib.importDrawings(await f.text());
+  renderLibrary(items);
+  say(`imported ${added}` + (skipped ? `, skipped ${skipped} (already in the library or invalid)` : ''));
 });
 
 $('copy').onclick = async () => {
