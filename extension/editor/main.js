@@ -141,12 +141,16 @@ function restore(from, to) {
 
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let workingTimer;
+let autosaveFailed = false;
 function changed() {
   renderInk();
   updateStats();
   writeJson();
   clearTimeout(workingTimer);
-  workingTimer = setTimeout(() => lib.saveWorking({ sdj: S.buildSdj(strokes, palette), customColors }), 400);
+  workingTimer = setTimeout(() => lib.saveWorking({ sdj: S.buildSdj(strokes, palette), customColors }).then(() => { autosaveFailed = false; }, err => {
+    if (!autosaveFailed) say(`autosave failed, the drawing is not stored: ${err.message}`, true);
+    autosaveFailed = true;
+  }), 400);
 }
 
 /** @param {number[][]} points @param {string} token @param {number} w */
@@ -589,6 +593,13 @@ function thumbnail(sdj) {
   return svg;
 }
 
+/**
+ * @param {string} label
+ * @param {(...args: any[]) => unknown} fn
+ */
+const libOp = (label, fn) => (/** @type {any[]} */ ...a) => new Promise(r => r(fn(...a))).catch(err => say(`${label} failed: ${err.message}`, true));
+const showLibrary = libOp('library', async () => renderLibrary(await lib.listDrawings()));
+
 function renderLibrary(items) {
   if (!items.length) {
     $('libList').replaceChildren(span('hint', {}, 'Nothing saved yet.'));
@@ -607,7 +618,7 @@ function renderLibrary(items) {
       const b = document.createElement('button');
       b.className = 'btn btn-outline-light btn-sm';
       b.textContent = label;
-      b.onclick = fn;
+      b.onclick = libOp(label.toLowerCase(), fn);
       actions.append(b);
     };
     act('Open', () => { useSdj(item.sdj); say(`opened "${item.name}"`); });
@@ -629,7 +640,7 @@ $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
   buildBars();
   renderInk();
-  if (!/** @type {HTMLElement} */ (document.querySelector('[data-panel=library]')).hidden) lib.listDrawings().then(renderLibrary);
+  if (!/** @type {HTMLElement} */ (document.querySelector('[data-panel=library]')).hidden) showLibrary();
 };
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
@@ -715,13 +726,13 @@ $('writeText').onclick = () => { textKey = null; lastImport = null; runText(); }
 const rerunText = rerunIf('text', runText);
 for (const id of ['font', 'textSize', 'textAlign']) $(id).addEventListener('input', rerunText);
 
-$('libSave').onclick = async () => {
+$('libSave').onclick = libOp('save', async () => {
   if (!strokes.length) return say('nothing to save', true);
   const name = $('libName').value.trim() || new Date().toLocaleString();
   renderLibrary(await lib.saveDrawing(name, S.buildSdj(strokes, palette)));
   $('libName').value = '';
   say(`saved "${name}"`);
-};
+});
 
 $('copy').onclick = async () => {
   writeJson();
@@ -748,7 +759,7 @@ $('tabs').onclick = e => {
   e.preventDefault();
   for (const a of $('tabs').querySelectorAll('[data-tab]')) a.classList.toggle('active', a.getAttribute('data-tab') === tab);
   for (const p of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.panel'))) p.hidden = p.dataset.panel !== tab;
-  if (tab === 'library') lib.listDrawings().then(renderLibrary);
+  if (tab === 'library') showLibrary();
 };
 
 document.addEventListener('keydown', e => {
