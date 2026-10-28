@@ -5,8 +5,9 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc -p jsconfig.json",
-    "check": "pnpm lint && pnpm typecheck",
-    "test": "sh tests/bundle.sh && python3 tests/test.py && python3 tests/test.py slowly",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "test": "node --test tests/",
+    "test:e2e": "sh tests/bundle.sh && python3 tests/test.py && python3 tests/test.py slowly",
     "zip": "cd extension && zip -r ../slowly-doodler.zip ."
   },
   "devDependencies": {
@@ -14,6 +15,7 @@
     "@types/chrome": "^0.3.6",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
+    "hashids": "^2.3.0",
     "typescript": "^7.0.2"
   }
 }
