@@ -2,7 +2,7 @@
 
 Chrome extension for web.slowly.app. It replaces the drawing editor in the letter composer with a bigger one and hands the result back to Slowly's own editor, so the letter goes out as a normal Slowly drawing. Unofficial, not affiliated with Slowly.
 
-Besides drawing by hand (symmetry brushes, tracing reference, layers, fill, lasso), it turns an SVG, a photo or text into pen strokes. Every import ends up as ordinary strokes with a timeline, so the recipient's replay looks hand drawn.
+Besides drawing by hand (symmetry brushes, tracing reference, layers, fill, lasso), it turns an SVG, a photo or text into pen strokes. Every import ends up as ordinary strokes with a timeline.
 
 ![Remix a received drawing, draw over it, send](docs/flow.gif)
 
@@ -61,4 +61,4 @@ The e2e (`tests/test.py`) drives the editor in headless Chromium and checks ever
 
 ## License
 
-MIT. The screenshots use `docs/art/kawaii-cat.svg`, the "kawaii cat" by amaziing.ai from freesvg.org, published there as public domain (CC0).
+MIT. The screenshots use `docs/art/girl-and-cat.jpg`, an illustration generated for this repo with Qwen-Image.

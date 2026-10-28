@@ -1,10 +1,10 @@
-import base64, io, json, math, pathlib, subprocess, tempfile, urllib.parse
+import io, json, math, pathlib, subprocess, tempfile, urllib.parse
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).parent.parent
 DOCS = ROOT / 'docs'
-ART = DOCS / 'art' / 'kawaii-cat.svg'
+ART = DOCS / 'art' / 'girl-and-cat.jpg'
 EXTENSION = ROOT / 'extension'
 SLOWLY_CSS = ROOT / 'unsynced' / 'slowly' / 'css'
 ORIGIN = 'https://web.slowly.app'
@@ -12,24 +12,18 @@ VIEWPORT = {'width': 1400, 'height': 1100}
 SCROLL_TO_DRAWING = 420
 PETALS = 8
 STEPS = 14
+HEART_STEPS = 24
+REMIX_WAIT_TRIES = 20
 GIF_HEIGHT = 640
 FLOW_WIDTH = 900
 REPLAY_FRAMES = 70
 PHOTO_SLIDERS = {'importDetail': '60', 'importWeight': '1'}
+HEARTS = [(0.80, 0.20, 0.07), (0.90, 0.30, 0.045), (0.14, 0.24, 0.055)]
+BLUSH = [(0.43, 0.335), (0.575, 0.335)]
 POP_BUTTONS = {'popGallery': '#galleryBtn', 'popInsert': '#insertBtn', 'popMore': '#moreBtn', 'popReplay': '#replay', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]'}
 
-RASTERIZE_JS = '''async (svg) => {
-  const img = new Image();
-  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-  await img.decode();
-  const c = document.createElement('canvas'); c.width = 800; c.height = 800;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, 800, 800);
-  ctx.drawImage(img, 0, 0, 800, 800);
-  return c.toDataURL('image/png').split(',')[1];
-}'''
+SET_SLIDER_JS = '(e, v) => { e.value = v; e.dispatchEvent(new Event("input")); }'
 
 
 def before_after(source, board_png, out):
@@ -56,10 +50,7 @@ def end_time(sdj):
     return max(s['startOffset'] + (s['points'][-1][2] if s['points'] else 0) for s in sdj['strokes'])
 
 
-def run():
-    work = pathlib.Path(tempfile.mkdtemp())
-    art = ART.read_text()
-    drawing = 'data:image/svg+xml,' + urllib.parse.quote(art)
+def open_slowly(p, profile, drawing):
     html = (DOCS / 'slowly-fixture.html').read_text().replace('{{DRAWING}}', drawing)
 
     def route(r):
@@ -68,14 +59,47 @@ def run():
         if path == '/static/css/icomoon.ttf': return r.fulfill(path=str(SLOWLY_CSS / 'icomoon.ttf'), content_type='font/ttf')
         r.fulfill(body=html, content_type='text/html')
 
+    ctx = p.chromium.launch_persistent_context(
+        str(profile), channel='chromium', headless=True, viewport=VIEWPORT,
+        args=[f'--disable-extensions-except={EXTENSION}', f'--load-extension={EXTENSION}'])
+    ctx.route(f'{ORIGIN}/**', route)
+    page = ctx.new_page()
+    page.goto(ORIGIN + '/')
+    page.wait_for_timeout(1500)
+    return ctx, page
+
+
+def import_photo(ed, page, path):
+    ed.locator('#insertBtn').click()
+    ed.locator('#photoFile').set_input_files(str(path))
+    page.wait_for_timeout(1500)
+    ed.locator('#importPreset').select_option('detailed')
+    ed.locator('#importColors').select_option('snap')
+    for id, value in PHOTO_SLIDERS.items():
+        ed.locator(f'#{id}').evaluate(SET_SLIDER_JS, value)
+    page.wait_for_timeout(2500)
+
+
+def trace(p, work):
+    ctx, page = open_slowly(p, work / 'trace', '')
+    page.locator('.composer-actions .icon-drawing').click()
+    page.wait_for_timeout(1500)
+    ed = page.frame_locator('iframe')
+    import_photo(ed, page, ART)
+    ed.locator('#importDone').click()
+    ed.locator('#send').click()
+    page.wait_for_selector('.drawing-thumbnail:not([hidden])', timeout=15000)
+    src = page.locator('.drawing-thumbnail img').get_attribute('src')
+    ctx.close()
+    return src
+
+
+def run():
+    work = pathlib.Path(tempfile.mkdtemp())
+
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(work / 'profile'), channel='chromium', headless=True, viewport=VIEWPORT,
-            args=[f'--disable-extensions-except={EXTENSION}', f'--load-extension={EXTENSION}'])
-        ctx.route(f'{ORIGIN}/**', route)
-        page = ctx.new_page()
-        page.goto(ORIGIN + '/')
-        page.wait_for_timeout(1500)
+        drawing = trace(p, work)
+        ctx, page = open_slowly(p, work / 'profile', drawing)
         ed = page.frame_locator('iframe')
         frames = {}
 
@@ -89,8 +113,8 @@ def run():
         def hold(kind, count, clip=None):
             for _ in range(count): shot(kind, clip)
 
-        def stage():
-            return ed.locator('.stage').bounding_box()
+        def editor():
+            return page.locator('iframe').bounding_box()
 
         def close_pops():
             ed.locator('body').evaluate('() => document.querySelectorAll(":popover-open").forEach(p => p.hidePopover())')
@@ -123,7 +147,7 @@ def run():
             cx, cy, unit = board['x'] + board['width'] / 2, board['y'] + board['height'] / 2, board['width'] / 720
             act('#symmetry', 'select_option', label='Kaleido 12')
             act('#rainbow', 'check', force=True)
-            clip = stage()
+            clip = editor()
             shot('kaleido', clip)
             for i in range(PETALS):
                 a0 = i * 2 * math.pi / PETALS / 6
@@ -137,18 +161,55 @@ def run():
                 page.mouse.down()
                 for k, pt in enumerate(pts[1:], 1):
                     page.mouse.move(*pt)
-                    if k % 2 == 0:
-                        shot('kaleido', clip)
-                        if i % 2 == 0 and k == STEPS: shot('flow')
+                    if k % 2 == 0: shot('kaleido', clip)
                 page.mouse.up()
                 shot('kaleido', clip)
             page.wait_for_timeout(200)
 
+        def stroke(points, every=0):
+            page.mouse.move(*points[0])
+            page.mouse.down()
+            for k, pt in enumerate(points[1:], 1):
+                page.mouse.move(*pt)
+                if every and k % every == 0: shot('flow')
+            page.mouse.up()
+
+        def heart(cx, cy, r):
+            ts = [2 * math.pi * k / HEART_STEPS for k in range(HEART_STEPS + 1)]
+            return [(cx + r * math.sin(t) ** 3, cy - r * (13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)) / 16) for t in ts]
+
+        def doodle():
+            board = ed.locator('#paper').bounding_box()
+            at = lambda fx, fy: (board['x'] + fx * board['width'], board['y'] + fy * board['width'] * 4 / 3)
+            ed.locator('[data-tool=pen]').click()
+            act('#colors [title=pink]')
+            for fx, fy, size in HEARTS:
+                cx, cy = at(fx, fy)
+                stroke(heart(cx, cy, size * board['width']), 4)
+            for fx, fy in BLUSH:
+                cx, cy = at(fx, fy)
+                for dx in (-12, 0, 12):
+                    stroke([(cx + dx - 4, cy + 8), (cx + dx + 4, cy - 8)])
+                shot('flow')
+
+        def reopen():
+            page.locator('.composer-actions .icon-drawing').click()
+            page.wait_for_timeout(1200)
+
         def replay():
             act('#replaySpeed', 'select_option', '1')
+            act('#out', 'scroll_into_view_if_needed')
+            page.wait_for_timeout(300)
             sdj = json.loads(ed.locator('#out').input_value())['sdj']
+            for _ in range(REMIX_WAIT_TRIES):
+                if sdj['strokes']: break
+                page.wait_for_timeout(500)
+                sdj = json.loads(ed.locator('#out').input_value())['sdj']
+            else:
+                page.screenshot(path='/tmp/remix-empty.png')
+                raise RuntimeError('remix produced no strokes')
             step = round(end_time(sdj) / REPLAY_FRAMES)
-            clip = stage()
+            clip = editor()
             page.clock.install()
             ed.locator('#replay').click()
             for _ in range(REPLAY_FRAMES * 2):
@@ -169,21 +230,27 @@ def run():
         page.wait_for_timeout(2500)
         hold('flow', 3)
         replay()
+        doodle()
+        hold('flow', 2)
+        save('Remix')
 
+        ed.locator('#send').click()
+        page.wait_for_selector('.drawing-thumbnail:not([hidden])', timeout=15000)
+        for _ in range(4):
+            page.wait_for_timeout(250)
+            shot('flow')
+        page.screenshot(path=str(DOCS / 'attached.png'))
+        hold('flow', 3)
+        page.wait_for_selector('.toast', state='detached', timeout=15000)
+
+        reopen()
         act('#clear')
-        source = work / 'art.png'
-        source.write_bytes(base64.b64decode(page.evaluate(RASTERIZE_JS, art)))
-        ui('#photoFile').set_input_files(str(source))
-        page.wait_for_timeout(1500)
-        ed.locator('#importPreset').select_option('detailed')
-        ed.locator('#importColors').select_option('snap')
-        for id, value in PHOTO_SLIDERS.items():
-            ed.locator(f'#{id}').evaluate('(e, v) => { e.value = v; e.dispatchEvent(new Event("input")); }', value)
-        page.wait_for_timeout(2500)
+        import_photo(ed, page, ART)
         ed.locator('#importDone').click()
         ed.locator('[data-tool=pen]').click()
-        before_after(source, ed.locator('#board').screenshot(), DOCS / 'photo.png')
-        save('Kitten')
+        ed.locator('#toast.shown').wait_for(state='detached')
+        before_after(ART, ed.locator('#paper').screenshot(), DOCS / 'photo.png')
+        save('Girl and cat')
 
         act('#clear')
         ui('#text').fill('Hello from far away, dear friend!')
@@ -197,22 +264,13 @@ def run():
         act('#rainbow', 'uncheck', force=True)
         act('#symmetry', 'select_option', 'off')
         save('Kaleido')
-        hold('flow', 3)
 
-        ed.locator('#send').click()
-        page.wait_for_selector('.drawing-thumbnail:not([hidden])', timeout=15000)
-        for _ in range(8):
-            page.wait_for_timeout(250)
-            shot('flow')
-        page.screenshot(path=str(DOCS / 'attached.png'))
-        hold('flow', 6)
-
-        page.wait_for_selector('.toast', state='detached', timeout=15000)
+        ed.locator('body').press('Escape')
+        page.wait_for_timeout(500)
         page.evaluate('document.documentElement.classList.add("theme-dark")')
-        page.locator('.composer-actions .icon-drawing').click()
-        page.wait_for_timeout(1200)
+        reopen()
         ed.locator('#galleryBtn').click()
-        page.wait_for_timeout(300)
+        ed.locator('#toast.shown').wait_for(state='detached')
         page.screenshot(path=str(DOCS / 'library.png'))
         ctx.close()
 
