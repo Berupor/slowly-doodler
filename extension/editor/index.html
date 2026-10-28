@@ -80,7 +80,17 @@
             <label for="refOpacity">Opacity</label>
             <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
           </div>
-          <div class="hint">Shown under the canvas for tracing, never exported.</div>
+          <div class="field">
+            <label for="refScale">Scale</label>
+            <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
+          </div>
+          <div class="field">
+            <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
+            <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
+            <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
+            <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
+          </div>
+          <div class="hint">Shown under the canvas for tracing, never exported. While Move is on, dragging the canvas moves the image instead of drawing.</div>
         </div>
       </div>
 

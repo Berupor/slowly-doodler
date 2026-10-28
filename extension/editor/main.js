@@ -55,6 +55,7 @@ const cx = W / 2, cy = H / 2;
 const rot = a => ([x, y]) => [cx + (x - cx) * Math.cos(a) - (y - cy) * Math.sin(a), cy + (x - cx) * Math.sin(a) + (y - cy) * Math.cos(a)];
 const flipX = ([x, y]) => [2 * cx - x, y];
 const flipY = ([x, y]) => [x, 2 * cy - y];
+let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false, refDrag = null;
 const same = p => p;
 const turns = n => Array.from({ length: n }, (_, i) => rot(i * 2 * Math.PI / n));
 const SYMMETRY = {
@@ -172,10 +173,14 @@ function finishGesture() {
   commit([...strokes, ...added], { keepClock: true });
 }
 
-function toCanvas(e) {
+function boardPoint(e) {
   const pt = board.createSVGPoint();
   pt.x = e.clientX; pt.y = e.clientY;
-  const p = pt.matrixTransform(board.getScreenCTM().inverse());
+  return pt.matrixTransform(board.getScreenCTM().inverse());
+}
+
+function toCanvas(e) {
+  const p = boardPoint(e);
   return [S.r2(Math.min(W, Math.max(0, p.x))), S.r2(Math.min(H, Math.max(0, p.y)))];
 }
 
@@ -201,6 +206,11 @@ board.addEventListener('pointerdown', e => {
   const now = Date.now();
   if (sessionStart === null) sessionStart = now - S.endTime(strokes) - (strokes.length ? STROKE_GAP_MS : 0);
   const p = toCanvas(e);
+  if (refMove) {
+    const p = boardPoint(e);
+    refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
+    return;
+  }
   gesture = { tool, color, weight, startOffset: now - sessionStart, t0: e.timeStamp, a: p, b: p, dur: 0, points: [[...p, 0]] };
   renderLive();
 });
@@ -214,6 +224,13 @@ board.addEventListener('pointermove', e => {
   for (const ev of e.getCoalescedEvents?.() ?? [e]) {
     const p = toCanvas(ev);
     const t = Math.max(0, Math.round(ev.timeStamp - gesture.t0));
+  if (refDrag) {
+    const p = boardPoint(e);
+    refPose.x = S.r2(refDrag.x + p.x - refDrag.px);
+    refPose.y = S.r2(refDrag.y + p.y - refDrag.py);
+    applyRef();
+    return;
+  }
     if (gesture.tool === 'pen') {
       const last = gesture.points[gesture.points.length - 1];
       if ((p[0] !== last[0] || p[1] !== last[1]) && gesture.points.length < S.LIMITS.pointsPerStroke) gesture.points.push([...p, t]);
@@ -226,7 +243,8 @@ board.addEventListener('pointermove', e => {
 });
 
 const endPointer = () => {
-  if (erasing) {
+  if (refDrag) refDrag = null;
+  else if (erasing) {
     const gone = erasing;
     erasing = null;
     if (gone.size) commit(strokes.filter(s => !gone.has(s)));
@@ -557,11 +575,32 @@ $('refFile').onchange = e => {
   e.target.value = '';
 };
 $('refOpacity').oninput = () => ref.firstChild?.setAttribute('opacity', $('refOpacity').value);
-$('refClear').onclick = () => ref.replaceChildren();
+$('refClear').onclick = () => { ref.replaceChildren(); setRefMove(false); };
+
+function applyRef() {
+  const { x, y, rot, flip, scale } = refPose;
+  ref.setAttribute('transform', `translate(${x} ${y}) translate(${W / 2} ${H / 2}) rotate(${rot}) scale(${flip * scale} ${scale}) translate(${-W / 2} ${-H / 2})`);
+}
+function resetRef() {
+  refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 };
+  $('refScale').value = 1;
+  applyRef();
+}
+function setRefMove(on) {
+  refMove = on && !!ref.firstChild;
+  $('refMove').setAttribute('aria-pressed', refMove);
+  board.classList.toggle('moving', refMove);
+}
+$('refMove').onclick = () => setRefMove(!refMove);
+$('refRotate').onclick = () => { refPose.rot = (refPose.rot + 90) % 360; applyRef(); };
+$('refFlip').onclick = () => { refPose.flip = -refPose.flip; applyRef(); };
+$('refScale').oninput = () => { refPose.scale = Number($('refScale').value); applyRef(); };
+$('refReset').onclick = resetRef;
 
 $('svgFile').onchange = async e => {
   const f = e.target.files[0];
   if (!f) return;
+  resetRef();
   svgSource = { text: await f.text(), remix: false };
   lastImport = null;
   runSvg('svg:' + Date.now());
