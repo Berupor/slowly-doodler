@@ -112,6 +112,54 @@ describe('photo edges', () => {
   });
 });
 
+/** @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {(x: number, y: number) => number[]} colourAt */
+function paint(crop, colourAt) {
+  const data = new Uint8ClampedArray(crop.w * crop.h * 4);
+  for (let v = 0; v < crop.h; v++)
+    for (let u = 0; u < crop.w; u++) data.set([...colourAt(crop.sx + (u + 0.5) * crop.sw / crop.w, crop.sy + (v + 0.5) * crop.sh / crop.h), 255], (v * crop.w + u) * 4);
+  return data;
+}
+
+/** @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {number[]} p canvas point to source pixels */
+const toSource = ({ toCanvas: m, sx, sy, sw, w }, [x, y]) => [sx + (x - m[4]) / m[0] * sw / w, sy + (y - m[5]) / m[3] * sw / w];
+
+const DETAILED = { mode: 'edges', detail: 120, minLength: 5, maxStrokes: 640, focus: [0.25, 1.3], seeds: [2, 0.3] };
+
+describe('photo flat illustration', () => {
+  const NAVY = [29, 36, 64], YELLOW = [255, 217, 102];
+  const roofs = [[0, 520], [70, 410], [150, 470], [230, 360], [320, 430], [400, 500], [480, 390], [600, 0]];
+  const roofAt = (/** @type {number} */ x) => roofs.findLast(([from]) => from <= x)?.[1] ?? 0;
+  const skyline = roofs.slice(0, -1).flatMap(([from, y], i) => [[from, y], [roofs[i + 1][0], y]]);
+  const windowAt = (/** @type {number} */ x, /** @type {number} */ y) => y > roofAt(x) + 20 && y < 700 && (x % 40) > 14 && (x % 40) < 30 && (y % 44) < 20 && Math.abs(x - Math.round(x / 80) * 80) > 12;
+  const sky = (/** @type {number} */ y) => [15 + 91 * y / 800, 27 + 49 * y / 800, 77 + 70 * y / 800];
+  const city = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 460, y - 130) < 55 ? [255, 243, 196]
+    : y > 720 || y < roofAt(x) ? sky(y) : windowAt(x, y) ? YELLOW : NAVY;
+
+  it('keeps a dark skyline on a gradient sky as a few long strokes', () => {
+    const crop = placementCrop(600, 800);
+    assert.ok(crop);
+    const lines = traceCrop(paint(crop, city), crop, { ...DETAILED, color: 'black', weight: 1 });
+    const along = lines.map(l => l.pts.map(p => toSource(crop, p)))
+      .filter(pts => pts.filter(([x, y]) => skyline.slice(1).some((q, i) => distToSegment(x, y, skyline[i], q) < 3)).length > 0.8 * pts.length);
+    const total = length(skyline), traced = along.reduce((a, p) => a + length(p), 0);
+    assert.ok(along.length >= 1 && along.length <= 3, `${along.length} strokes on the skyline`);
+    assert.ok(traced > 0.85 * total, `${Math.round(traced)} of ${Math.round(total)} traced`);
+  });
+
+  it('draws a coloured shape on a dark ground in the colour of the shape', () => {
+    const crop = placementCrop(300, 300);
+    assert.ok(crop);
+    const square = (/** @type {number} */ x, /** @type {number} */ y) => Math.abs(x - 90) < 40 && Math.abs(y - 150) < 40;
+    const disc = (/** @type {number} */ x, /** @type {number} */ y) => Math.hypot(x - 220, y - 150) < 40;
+    const lines = traceCrop(paint(crop, (x, y) => square(x, y) ? YELLOW : disc(x, y) ? [229, 57, 53] : NAVY), crop,
+      { color: 'black', weight: 1, detail: 60, minLength: 16, photoColors: true });
+    const at = (/** @type {number} */ cx) => lines.filter(l => Math.abs(toSource(crop, l.pts[0])[0] - cx) < 60);
+    assert.ok(at(90).length && at(220).length, `${lines.length} strokes`);
+    for (const l of at(90)) assert.equal(l.color, 'yellow');
+    for (const l of at(220)) assert.equal(l.color, 'red');
+  });
+});
+
 describe('clipToCanvas', () => {
   it('splits a line that leaves and re-enters the canvas at the crossings', () => {
     const pieces = clipToCanvas([[100, 100], [-100, 100], [-100, 200], [100, 200]]);

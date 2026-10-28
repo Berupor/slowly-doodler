@@ -33,6 +33,11 @@ const SALIENCY_SPREAD = 0.03;
 const SALIENCY_TOP = 0.98;
 const SALIENCY_GAMMA = 1.5;
 const CENTRE_SIGMA = 0.32;
+const STRAIGHT_EPS = 1.5;
+const STRAIGHT_PIECE = 12;
+const STRAIGHT_SHARE = 0.75;
+const STRAIGHT_LENGTH = 1 / 16;
+const STRAIGHT_MARGIN = 2;
 
 function thin(img, w, h) {
   const del = [];
@@ -569,10 +574,62 @@ function inkColour(data, w, h, path) {
   return sum.map(v => v / path.length);
 }
 
+function insideColour(data, w, h, pts) {
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) area += pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1];
+  area /= 2;
+  const depth = Math.min(INK_RADIUS, Math.sqrt(Math.abs(area)) / 4), side = Math.sign(area);
+  if (depth < 1) return null;
+  const sum = [0, 0, 0];
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % n], len = Math.hypot(bx - ax, by - ay);
+    if (!len) continue;
+    const x = Math.round((ax + bx) / 2 - side * depth * (by - ay) / len), y = Math.round((ay + by) / 2 + side * depth * (bx - ax) / len);
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    for (let c = 0; c < 3; c++) sum[c] += data[(y * w + x) * 4 + c] * len;
+    total += len;
+  }
+  return total ? sum.map(v => v / total) : null;
+}
+
 function linkStrokes(lines, w, h) {
   const { segs, nodes } = skeletonGraph(lines, w, h);
   const dead = dropSpurs(segs, nodes);
   return closeGaps(assemble(segs, pairAtJunctions(segs, nodes), dead));
+}
+
+function dilate(mask, w, h, r) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      for (let ny = Math.max(0, y - r); ny <= Math.min(h - 1, y + r); ny++) out.fill(1, ny * w + Math.max(0, x - r), ny * w + Math.min(w - 1, x + r) + 1);
+    }
+  return out;
+}
+
+function straightLength(pts) {
+  const kept = rdp(pts, STRAIGHT_EPS);
+  let sum = 0;
+  for (let i = 1; i < kept.length; i++) {
+    const d = Math.hypot(kept[i][0] - kept[i - 1][0], kept[i][1] - kept[i - 1][1]);
+    if (d >= STRAIGHT_PIECE) sum += d;
+  }
+  return sum;
+}
+
+// importance also scales away the long straight edges of a flat illustration (a skyline, a road), so lines straight
+// and strong over their whole length come back at full strength
+function straightEdges({ strength, shift }, traced, w, h, [low, high]) {
+  const mask = hysteresis(strength, w, h, [low, high]), near = dilate(traced, w, h, STRAIGHT_MARGIN);
+  for (let i = 0; i < mask.length; i++) if (near[i]) mask[i] = 0;
+  thin(mask, w, h);
+  dropCornerPixels(mask, w, h);
+  const long = STRAIGHT_LENGTH * Math.max(w, h);
+  return linkStrokes({ mask, strength, shift }, w, h)
+    .filter(s => s.len >= long && s.sum >= high * s.len && straightLength(s.pts) >= STRAIGHT_SHARE * s.len);
 }
 
 function withinBudget(strokes, minLength, high, maxStrokes) {
@@ -681,18 +738,21 @@ export function traceCrop(data, { w, h, toCanvas, enlarged }, {
   const g = grayscale(data, w, h);
   stretchLevels(g);
   const found = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail, data);
+  const raw = { ...found, strength: Float32Array.from(found.strength) };
   if (focus) {
     const weightOf = importance(data, w, h);
     for (let i = 0; i < found.strength.length; i++) found.strength[i] *= focus[0] + (focus[1] - focus[0]) * weightOf[i];
   }
-  const high = found.high * seeds[0];
-  const lines = { ...found, high, mask: hysteresis(found.strength, w, h, [high * seeds[1], high]) };
+  const high = found.high * seeds[0], thresholds = /** @type {[number, number]} */ ([high * seeds[1], high]);
+  const lines = { ...found, high, mask: hysteresis(found.strength, w, h, thresholds) };
   thin(lines.mask, w, h);
   dropCornerPixels(lines.mask, w, h);
-  const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength / enlarged, lines.high, maxStrokes)
+  const linked = linkStrokes(lines, w, h);
+  if (focus) linked.push(...straightEdges(raw, lines.mask, w, h, thresholds));
+  const strokes = drawingOrder(withinBudget(linked, minLength / enlarged, lines.high, maxStrokes)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
-  return strokes.flatMap(({ pts }) => {
-    const ink = photoColors ? nearestBase(inkColour(data, w, h, pts)) : color;
+  return strokes.flatMap(({ pts, closed }) => {
+    const ink = photoColors ? nearestBase((closed && insideColour(data, w, h, pts)) || inkColour(data, w, h, pts)) : color;
     return clipToCanvas(pts.map(([x, y]) => applyMatrix(toCanvas, x, y))).map(piece => ({ color: ink, weight, pts: piece }));
   }).slice(0, LIMITS.strokes);
 }
