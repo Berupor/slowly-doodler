@@ -45,10 +45,12 @@ function shapeToPathData(el) {
 // 250 KB single-path SVG take minutes. Arcs follow SVG 1.1 appendix F.6.5 (endpoint to center parameterization).
 function flattenPath(d, tol) {
   const subpaths = [];
-  let cur = null, x = 0, y = 0, sx = 0, sy = 0, cpx = 0, cpy = 0, prev = '';
+  /** @type {number[][]} */
+  let cur = [];
+  let x = 0, y = 0, sx = 0, sy = 0, cpx = 0, cpy = 0, prev = '';
   const steps = len => Math.min(256, Math.max(1, Math.ceil(len / tol)));
-  const begin = (px, py) => { if (cur && cur.length > 1) subpaths.push(cur); cur = [[px, py]]; sx = px; sy = py; };
-  const ensure = () => { if (!cur) begin(x, y); };
+  const begin = (px, py) => { if (cur.length > 1) subpaths.push(cur); cur = [[px, py]]; sx = px; sy = py; };
+  const ensure = () => { if (!cur.length) begin(x, y); };
   const line = (x2, y2) => {
     const n = steps(Math.hypot(x2 - x, y2 - y));
     for (let i = 1; i <= n; i++) cur.push([x + (x2 - x) * i / n, y + (y2 - y) * i / n]);
@@ -122,12 +124,15 @@ function flattenPath(d, tol) {
     }
     prev = lower;
   };
-  let cmd = null, args = [];
+  /** @type {string | null} */
+  let cmd = null;
+  /** @type {number[]} */
+  let args = [];
   const run = () => {
     if (!cmd) return;
     const lower = cmd.toLowerCase();
     if (lower === 'z') {
-      if (cur) { line(sx, sy); subpaths.push(cur); cur = null; }
+      if (cur.length) { line(sx, sy); subpaths.push(cur); cur = []; }
       x = sx; y = sy; prev = 'z';
       return;
     }
@@ -139,7 +144,7 @@ function flattenPath(d, tol) {
     else args.push(Number(num));
   }
   run();
-  if (cur && cur.length > 1) subpaths.push(cur);
+  if (cur.length > 1) subpaths.push(cur);
   return subpaths;
 }
 
@@ -194,6 +199,13 @@ function fitBudget(polylines) {
   return polylines.filter((_, i) => keep.has(i));
 }
 
+/** @param {SVGGraphicsElement} el */
+function screenMatrix(el) {
+  const matrix = el.getScreenCTM();
+  if (!matrix) throw new Error('svg is not rendered');
+  return matrix;
+}
+
 function yielder(onProgress) {
   let last = performance.now();
   return async fraction => {
@@ -204,12 +216,16 @@ function yielder(onProgress) {
   };
 }
 
+/**
+ * @param {string} text
+ * @param {{ fills?: string, colors?: string, remix?: boolean, onProgress?: (fraction: number) => void }} [options]
+ */
 export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix = false, onProgress } = {}) {
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
-  const src = doc.documentElement;
+  const src = /** @type {Element} */ (doc.documentElement);
   if (src.nodeName !== 'svg') throw new Error('not an svg file');
   sanitize(src);
-  const host = document.importNode(src, true);
+  const host = /** @type {SVGSVGElement} */ (document.importNode(src, true));
   host.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden';
   document.body.appendChild(host);
   const tick = yielder(onProgress);
@@ -217,20 +233,20 @@ export async function importSvg(text, { fills = 'hatch', colors = 'snap', remix 
     // Slowly renders letters cropped to the ink: viewBox height shrinks and a <g transform="translate(0,-top)">
     // shifts the strokes; measuring in that group's space gives back the original canvas coordinates
     const cropGroup = remix && host.querySelector(':scope > g[transform^="translate"]');
-    const rootInv = (cropGroup || host).getScreenCTM().inverse();
+    const rootInv = screenMatrix(/** @type {SVGGraphicsElement} */ (cropGroup || host)).inverse();
     const vb = host.viewBox.baseVal;
     const keep = remix && vb && Math.abs(vb.width - W) < 1;
     const bbox = host.getBBox();
     const kGuess = keep ? 1 : Math.min((W - 2 * PAD) / (bbox.width || 1), (H - 2 * PAD) / (bbox.height || 1));
 
     const shapes = [];
-    for (const el of host.querySelectorAll(SHAPES)) {
+    for (const el of /** @type {NodeListOf<SVGGeometryElement>} */ (host.querySelectorAll(SHAPES))) {
       const cs = getComputedStyle(el);
       if (cs.display === 'none') continue;
       const stroke = cs.stroke !== 'none' ? parseColor(cs.stroke) : null;
       const fill = cs.fill !== 'none' ? parseColor(cs.fill) : null;
       if (!stroke && !fill) continue;
-      const matrix = rootInv.multiply(el.getScreenCTM());
+      const matrix = rootInv.multiply(screenMatrix(el));
       const scale = Math.sqrt(Math.abs(matrix.a * matrix.d - matrix.b * matrix.c)) || 1;
       shapes.push({ stroke, fill, sw: (parseFloat(cs.strokeWidth) || 1) * scale, matrix, scale,
         d: shapeToPathData(el), length: el.getTotalLength() });

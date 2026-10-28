@@ -149,6 +149,7 @@ function gaussian(g, w, h, sigma) {
   return out;
 }
 
+/** @param {number[]} range @param {number} detail */
 const byDetail = ([hi, lo], detail) => hi * (lo / hi) ** (detail / 100);
 
 function hysteresis(strength, w, h, [low, high]) {
@@ -465,7 +466,7 @@ function inkColour(data, w, h, path) {
   const sum = [0, 0, 0];
   for (const [px, py] of path) {
     const x = Math.round(px), y = Math.round(py);
-    let best = null, score = -1;
+    let best = [0, 0, 0], score = -1;
     for (let dy = -INK_RADIUS; dy <= INK_RADIUS; dy++)
       for (let dx = -INK_RADIUS; dx <= INK_RADIUS; dx++) {
         const nx = x + dx, ny = y + dy;
@@ -501,7 +502,7 @@ function withinBudget(strokes, minLength, high) {
 export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, color, weight, photoColors = false }) {
   const s = Math.min(1, (W - 2 * PAD) / image.width, (H - 2 * PAD) / image.height);
   const w = Math.max(1, Math.round(image.width * s)), h = Math.max(1, Math.round(image.height * s));
-  const ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  const ctx = canvas2d(w, h);
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
@@ -519,6 +520,12 @@ export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength
     weight,
     pts: pts.map(([x, y]) => [x * k + ox, y * k + oy]),
   }));
+}
+
+function canvas2d(w, h) {
+  const ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('2d canvas context unavailable');
+  return ctx;
 }
 
 function wrap(ctx, text, maxWidth) {
@@ -539,12 +546,12 @@ export function textToPolylines(text, { font = 'cursive', size = 56, align = 'to
   const S = TEXT_RENDER_SCALE;
   const px = Math.round(size * S);
   const fontCss = `${px}px ${font}`;
-  const probe = new OffscreenCanvas(1, 1).getContext('2d');
+  const probe = canvas2d(1, 1);
   probe.font = fontCss;
   const lines = wrap(probe, text, (W - 2 * PAD) * S);
   const lineH = Math.round(px * 1.35);
   const w = Math.ceil((W - 2 * PAD) * S), h = lineH * lines.length + px;
-  const ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true });
+  const ctx = canvas2d(w, h);
   ctx.font = fontCss;
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#000';

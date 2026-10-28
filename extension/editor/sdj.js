@@ -1,4 +1,12 @@
 // Mirrors the web.slowly.app drawing editor (main.*.js: wz, Ez, Tz, Wz); keep in sync when their bundle changes
+
+/** @typedef {[x: number, y: number, ms: number]} Point */
+/** @typedef {{ light: string, dark: string }} ColorEntry */
+/** @typedef {Record<string, ColorEntry>} Palette */
+/** @typedef {{ color: string, weight: number, startOffset: number, points: Point[] }} Stroke */
+/** @typedef {{ version: number, canvas: { width: number, height: number }, palette: Palette, strokes: Stroke[] }} Sdj */
+/** @typedef {{ color: string, weight: number, pts: number[][] }} Polyline */
+
 export const W = 720, H = 960;
 export const BASE_COLORS = {
   black: '#222222', grey: '#9e9e9e', red: '#e53935', orange: '#fb8c00', yellow: '#fdd835', green: '#43a047',
@@ -12,6 +20,7 @@ export const STROKE_SCALE = 2;
 
 export const r2 = v => Math.round(v * 100) / 100;
 
+/** @returns {ColorEntry | undefined} */
 export function baseEntry(token) {
   if (token === CANVAS_TOKEN) return CANVAS_ENTRY;
   const hex = BASE_COLORS[token];
@@ -20,6 +29,7 @@ export function baseEntry(token) {
 
 export function customToken(hex) { return 'c' + hex.slice(1).toLowerCase(); }
 
+/** @param {string} token @param {Palette} palette @returns {ColorEntry} */
 export function entryFor(token, palette) {
   return palette[token] || baseEntry(token) || { light: '#000000', dark: '#ffffff' };
 }
@@ -28,6 +38,7 @@ export function isStandard(stroke) {
   return (stroke.color in BASE_COLORS || stroke.color === CANVAS_TOKEN) && SIZES.includes(stroke.weight);
 }
 
+/** @param {number[][]} points */
 export function pathD(points) {
   const p = points.length === 1 ? [points[0], [points[0][0] + 0.01, points[0][1]]] : points;
   let d = `M ${p[0][0]} ${p[0][1]}`;
@@ -37,10 +48,12 @@ export function pathD(points) {
   return d + ` L ${l[0]} ${l[1]}`;
 }
 
+/** @param {Stroke[]} strokes */
 export function endTime(strokes) {
   return strokes.reduce((m, s) => Math.max(m, s.startOffset + (s.points[s.points.length - 1][2] || 0)), 0);
 }
 
+/** @param {Stroke[]} strokes @param {Palette} palette @returns {Sdj} */
 export function buildSdj(strokes, palette) {
   const used = {};
   for (const s of strokes) used[s.color] = entryFor(s.color, palette);
@@ -56,6 +69,7 @@ export function buildSdj(strokes, palette) {
   };
 }
 
+/** @param {Sdj} sdj @returns {string | null} */
 export function validate(sdj) {
   const { strokes, palette } = sdj;
   if (!strokes.length) return 'nothing drawn';
@@ -71,12 +85,16 @@ export function validate(sdj) {
 }
 
 // Gives generated polylines a hand-drawn timeline: speed wobbles, short pauses between strokes
+/** @param {Polyline[]} polylines @param {number} startAt @returns {Stroke[]} */
 export function timed(polylines, startAt, { unitsPerMs = 0.6, gapMs = 350, minStep = 1 } = {}) {
   const out = [];
   let offset = startAt;
   for (const pl of polylines) {
+    /** @type {Point[]} */
     const points = [];
-    let ms = 0, last = null;
+    /** @type {number[] | null} */
+    let last = null;
+    let ms = 0;
     for (const [x0, y0] of pl.pts) {
       const x = r2(Math.min(W, Math.max(0, x0))), y = r2(Math.min(H, Math.max(0, y0)));
       if (last) {
