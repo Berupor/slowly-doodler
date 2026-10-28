@@ -131,17 +131,24 @@ const TOOLS = {
   ellipse: () => icon('circle-o', '◯'),
   eraser: () => icon('eraser', '⌫'),
   fill: () => icon('droplet', '◐'),
-  select: () => span('tool-select'),
 };
+/** @type {Record<string, string>} */
+const TOOL_OPTIONS = { pen: 'popBrush', line: 'popBrush', ellipse: 'popBrush', eraser: 'popEraser', fill: 'popFill' };
+const TOAST_MS = 2500, TOAST_ERROR_MS = 6000;
 /** @type {Record<string, string>} */
 const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser', f: 'fill', s: 'select' };
 const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file])';
 
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let toastTimer;
 /** @param {string} text */
 function say(text, error = false) {
   const el = $('status');
   el.textContent = text;
   el.classList.toggle('error', error);
+  $('toast').classList.add('shown');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('shown'), error ? TOAST_ERROR_MS : TOAST_MS);
 }
 
 /** @param {S.Stroke[]} next */
@@ -331,6 +338,7 @@ const gridPoint = p => prec.snap ? P.snapToGrid(p, prec.spacing) : p;
 function setPicking(on) {
   picking = on;
   board.classList.toggle('picking', on);
+  $('pick').setAttribute('aria-pressed', String(on));
 }
 
 /** @param {PointerEvent} e */
@@ -420,6 +428,8 @@ board.addEventListener('wheel', e => {
 
 board.addEventListener('pointerdown', e => {
   if (e.button !== 0 && e.button !== 1) return;
+  const menu = document.querySelector(':popover-open');
+  if (menu instanceof HTMLElement) return menu.hidePopover();
   board.setPointerCapture(e.pointerId);
   if (e.pointerType === 'touch') {
     touches.set(e.pointerId, [e.clientX, e.clientY]);
@@ -575,10 +585,31 @@ function icon(name, glyph) {
   return i;
 }
 
+const toolButtons = Object.entries(TOOLS).map(([t, content]) => {
+  const b = document.createElement('button');
+  b.className = 'drawing-tool-circle';
+  b.dataset.tool = t;
+  const key = Object.keys(TOOL_KEYS).find(k => TOOL_KEYS[k] === t)?.toUpperCase();
+  b.title = `${t[0].toUpperCase()}${t.slice(1)} (${key})${TOOL_OPTIONS[t] ? ', tap again for options' : ''}`;
+  b.append(content());
+  b.onclick = e => {
+    if (tool === t) return;
+    e.preventDefault();
+    tool = t;
+    buildBars();
+  };
+  return b;
+});
+$('tools').append(...toolButtons);
+$('selectTool').onclick = () => { tool = 'select'; buildBars(); };
+
 function buildBars() {
-  pillButtons('tools', 'drawing-tool-circle', Object.entries(TOOLS).map(([t, content]) => ({
-    content: content(), title: t, on: tool === t, pick: () => tool = t,
-  })));
+  for (const b of toolButtons) {
+    const t = String(b.dataset.tool);
+    b.setAttribute('aria-pressed', String(tool === t));
+    b.popoverTargetElement = tool === t && TOOL_OPTIONS[t] ? $(TOOL_OPTIONS[t]) : null;
+  }
+  $('selectTool').setAttribute('aria-pressed', String(tool === 'select'));
   const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
   pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
     content: span('drawing-color-swatch', { background: S.entryFor(t, palette)[isDark() ? 'dark' : 'light'] }),
@@ -589,13 +620,14 @@ function buildBars() {
   selector.sync(tool);
   board.classList.toggle('cutter', cutMode());
   board.classList.toggle('filling', tool === 'fill');
+  $('colorDot').style.background = S.entryFor(color, palette)[isDark() ? 'dark' : 'light'];
   showWeight();
 }
 
-const sizeRail = /** @type {HTMLElement} */ (document.querySelector('.size-rail'));
+const sizeRail = $('weightRail');
 const railFraction = w => String((w - S.LIMITS.minWeight) / (S.LIMITS.maxWeight - S.LIMITS.minWeight));
 sizeRail.prepend(...S.SIZES.map(w => {
-  const stop = span('size-stop');
+  const stop = span('rail-stop');
   stop.style.setProperty('--f', railFraction(w));
   return stop;
 }));
@@ -890,7 +922,7 @@ function renderLibrary(items) {
         renderLibrary(libItems);
         if (save && name && name !== item.name) libOp('rename', async () => renderLibrary(await lib.updateDrawing(item.id, { name })))();
       };
-      input.onkeydown = e => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+      input.onkeydown = e => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') { e.preventDefault(); finish(false); } };
       input.onblur = () => finish(true);
       title.replaceWith(input);
       input.focus();
@@ -933,7 +965,7 @@ $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
   buildBars();
   renderInk();
-  if (!/** @type {HTMLElement} */ (document.querySelector('[data-panel=library]')).hidden) showLibrary();
+  renderLibrary(libItems);
 };
 $('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
 $('symmetry').onchange = () => { symmetry = $('symmetry').value; };
@@ -944,6 +976,7 @@ $('gridSpacing').replaceChildren(...P.GRID_SPACINGS.map(n => new Option(`${n} un
 function applyPrecision() {
   $('smoothing').value = String(prec.smoothing);
   $('smoothingOut').textContent = String(prec.smoothing);
+  $('smoothingRail').style.setProperty('--f', String(prec.smoothing / 100));
   $('gridOn').checked = prec.grid;
   $('snapOn').checked = prec.snap;
   $('gridSpacing').value = String(prec.spacing);
@@ -1099,9 +1132,23 @@ $('tabs').onclick = e => {
   const tab = /** @type {HTMLElement | null} */ (e.target.closest('[data-tab]'))?.dataset.tab;
   if (!tab) return;
   e.preventDefault();
-  for (const a of $('tabs').querySelectorAll('[data-tab]')) a.classList.toggle('active', a.getAttribute('data-tab') === tab);
+  for (const a of $('tabs').querySelectorAll('[data-tab]')) {
+    const on = a.getAttribute('data-tab') === tab;
+    a.classList.toggle('active', on);
+    a.setAttribute('aria-selected', String(on));
+  }
   for (const p of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.panel'))) p.hidden = p.dataset.panel !== tab;
-  if (tab === 'library') showLibrary();
+};
+$('popGallery').addEventListener('toggle', e => { if (/** @type {ToggleEvent} */ (e).newState === 'open') showLibrary(); });
+for (const pop of document.querySelectorAll('[popover]')) pop.addEventListener('toggle', e => {
+  document.querySelector(`[popovertarget=${pop.id}]`)?.classList.toggle('open', /** @type {ToggleEvent} */ (e).newState === 'open');
+});
+$('pick').onclick = () => setPicking(!picking);
+for (const label of /** @type {NodeListOf<HTMLLabelElement>} */ (document.querySelectorAll('label.btn'))) label.onkeydown = e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  e.stopPropagation();
+  label.click();
 };
 
 document.addEventListener('keydown', e => {
@@ -1128,7 +1175,7 @@ document.addEventListener('change', e => { if (e.target instanceof HTMLSelectEle
 window.addEventListener('blur', () => setSpace(false));
 $('zoom').onclick = () => setView(0, 0, W);
 
-$('themeCard').hidden = embedded;
+$('prefsTab').hidden = embedded;
 $('close').hidden = !embedded;
 $('close').onclick = () => window.parent.postMessage({ type: 'doodler:close' }, SLOWLY_ORIGIN);
 const send = $('send');

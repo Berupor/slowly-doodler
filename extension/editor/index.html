@@ -7,356 +7,352 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="layout">
-  <section class="stage">
-    <header class="drawing-header">
-      <button class="drawing-icon-button drawing-circle" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
-      <div class="drawing-header-trailing">
-        <button class="drawing-count drawing-pill drawing-zoom" id="zoom" title="Fit to screen (0)" hidden></button>
-        <span class="drawing-count drawing-pill" id="badge" title="Uses weights or colours outside the standard set" hidden>experimental</span>
-        <span class="drawing-count drawing-pill" id="stats" role="status"></span>
-        <div class="drawing-pill drawing-history" role="group" aria-label="History">
-          <button class="drawing-icon-button" id="undo" title="Undo (Ctrl+Z)"><i class="icon-undo drawing-font-icon" data-glyph="↶"></i></button>
-          <button class="drawing-icon-button" id="redo" title="Redo (Ctrl+Shift+Z)"><i class="icon-undo drawing-font-icon flip" data-glyph="↶"></i></button>
-          <button class="drawing-icon-button" id="clear" title="Clear canvas"><i class="icon-trash-o drawing-font-icon" data-glyph="🗑"></i></button>
-        </div>
-        <button class="drawing-icon-button drawing-circle" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
-        <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
-      </div>
-    </header>
-    <div class="paper">
-      <svg id="board" viewBox="0 0 720 960" xmlns="http://www.w3.org/2000/svg">
-        <g id="ref"></g><g id="guides"></g><g id="ink"></g><g id="live"></g>
-        <circle id="eraserRing" r="0" style="display: none"/>
-      </svg>
-    </div>
-    <div class="size-rail drawing-pill" title="Brush size ([ and ])">
-      <span class="size-stop" style="--at: 1"></span><span class="size-stop" style="--at: 3"></span><span class="size-stop" style="--at: 6"></span>
+<header class="topbar">
+  <div class="bar-group">
+    <button class="bar-text" id="galleryBtn" popovertarget="popGallery" title="Gallery: saved drawings">Gallery</button>
+    <button class="drawing-icon-button bar-button" id="actionsBtn" popovertarget="popActions" title="Actions: import, reference, share, replay, help"><i class="icon-settings drawing-font-icon" data-glyph="⚙"></i></button>
+    <button class="drawing-icon-button bar-button" id="guidesBtn" popovertarget="popGuides" title="Canvas guides: symmetry and grid"><i class="icon-grid drawing-font-icon" data-glyph="#"></i></button>
+    <button class="drawing-tool-circle" id="selectTool" title="Select (S)" aria-pressed="false"><span class="tool-select"></span></button>
+  </div>
+  <div class="bar-group">
+    <div class="bar-tools" id="tools" role="group" aria-label="Tools"></div>
+    <button class="drawing-icon-button bar-button" id="layersBtn" title="Layers (coming later)" disabled>
+      <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5"/></svg>
+    </button>
+    <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
+    <span class="bar-sep"></span>
+    <button class="drawing-icon-button drawing-circle" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
+    <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
+    <button class="drawing-icon-button drawing-circle" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="paper">
+    <svg id="board" viewBox="0 0 720 960" xmlns="http://www.w3.org/2000/svg">
+      <g id="ref"></g><g id="guides"></g><g id="ink"></g><g id="live"></g>
+      <circle id="eraserRing" r="0" style="display: none"/>
+    </svg>
+  </div>
+
+  <div class="side drawing-pill" role="group" aria-label="Brush">
+    <div class="rail" id="weightRail" title="Brush size ([ and ])">
       <input type="range" id="weight" min="0.5" max="8" step="0.5" value="3" aria-label="Brush size">
-      <div class="size-preview drawing-pill" id="weightPreview"><span class="size-dot" id="weightDot"></span><output id="weightOut">3</output></div>
+      <div class="rail-preview drawing-pill"><span class="size-dot" id="weightDot"></span><output id="weightOut">3</output></div>
     </div>
-    <div class="dock">
-      <div class="drawing-tool-group" id="tools"></div>
+    <button class="side-button" id="pick" title="Eyedropper (I, or Alt+click)" aria-pressed="false"><span class="modify"></span></button>
+    <div class="rail" id="smoothingRail" title="Smoothing">
+      <input type="range" id="smoothing" min="0" max="100" step="1" value="20" aria-label="Smoothing">
+      <div class="rail-preview drawing-pill">smoothing <output id="smoothingOut">20</output></div>
     </div>
-    <div class="drawing-color-group"><div class="drawing-colors" id="colors"></div></div>
-  </section>
+    <button class="drawing-icon-button side-button" id="undo" title="Undo (Ctrl+Z)"><i class="icon-undo drawing-font-icon" data-glyph="↶"></i></button>
+    <button class="drawing-icon-button side-button" id="redo" title="Redo (Ctrl+Shift+Z)"><i class="icon-undo drawing-font-icon flip" data-glyph="↶"></i></button>
+  </div>
 
-  <aside>
-    <ul class="nav nav-tabs" id="tabs">
-      <li class="nav-item"><a class="nav-link active" href="#" data-tab="draw">Draw</a></li>
-      <li class="nav-item"><a class="nav-link" href="#" data-tab="import">Import</a></li>
-      <li class="nav-item"><a class="nav-link" href="#" data-tab="library">Library</a></li>
-      <li class="nav-item"><a class="nav-link" href="#" data-tab="json">JSON</a></li>
-    </ul>
+  <div class="dock"></div>
 
-    <div class="panel" data-panel="draw">
-      <div class="card shadow-sm">
-        <div class="card-header">Brush</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="symmetry">Symmetry</label>
-            <select class="custom-select custom-select-sm" id="symmetry"></select>
-          </div>
-          <div class="field">
-            <label for="smoothing">Smoothing</label>
-            <input type="range" class="custom-range" id="smoothing" min="0" max="100" step="1" value="20">
-            <output id="smoothingOut">20</output>
-          </div>
-          <div class="field">
-            <label for="eraserMode">Eraser</label>
-            <select class="custom-select custom-select-sm" id="eraserMode">
-              <option value="whole">whole strokes</option><option value="cut">cut</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="customColor">Colour</label>
-            <input type="color" id="customColor" value="#7e57c2">
-            <button class="btn btn-outline-light btn-sm" id="addColor">Add to palette</button>
-          </div>
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="rainbow">
-            <label class="custom-control-label" for="rainbow">Rainbow</label>
-          </div>
-          <div class="hint">Cut erases only what the eraser passes over and splits the strokes there; its size follows the brush weight. Rainbow cycles the 12 standard colours. Weights other than 1, 3, 6 and custom colours pass the editor's validation but are not verified with the Slowly apps.</div>
-        </div>
-      </div>
+  <div class="hud">
+    <span class="drawing-count drawing-pill" id="badge" title="Uses weights or colours outside the standard set, not verified with the Slowly apps" hidden>experimental</span>
+    <button class="drawing-count drawing-pill drawing-zoom" id="zoom" title="Fit to screen (0)" hidden></button>
+    <span class="drawing-count drawing-pill" id="stats"></span>
+  </div>
 
-      <div class="card shadow-sm">
-        <div class="card-header">Grid</div>
-        <div class="card-body">
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="gridOn">
-            <label class="custom-control-label" for="gridOn">Show grid, centre and thirds</label>
-          </div>
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="snapOn">
-            <label class="custom-control-label" for="snapOn">Snap to grid</label>
-          </div>
-          <div class="field">
-            <label for="gridSpacing">Spacing</label>
-            <select class="custom-select custom-select-sm" id="gridSpacing"></select>
-          </div>
-          <div class="hint">Snap moves line and ellipse corners and the start of a pen stroke to the nearest grid crossing. The grid is never sent.</div>
-        </div>
-      </div>
+  <div class="toast drawing-pill" id="toast" role="status" aria-live="polite"><span id="status"></span><progress id="progress" max="1" hidden></progress></div>
+</main>
 
-      <div class="card shadow-sm">
-        <div class="card-header">Fill</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="fillStyle">Style</label>
-            <select class="custom-select custom-select-sm" id="fillStyle">
-              <option value="hatch">hatch</option><option value="cross">cross-hatch</option><option value="scribble">scribble</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="fillAngle">Angle</label>
-            <input type="range" class="custom-range" id="fillAngle" min="0" max="175" step="5" value="45">
-            <output id="fillAngleOut">45°</output>
-          </div>
-          <div class="field">
-            <label for="fillSpacing">Spacing</label>
-            <input type="range" class="custom-range" id="fillSpacing" min="1.2" max="6" step="0.2" value="2">
-            <output id="fillSpacingOut">2×</output>
-          </div>
-          <div class="hint">The Fill tool hatches the closed shape you click, in the current colour and weight. Spacing is in stroke widths. Small gaps in the outline are ignored; a shape that is open to the page edge fills the whole open area.</div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm">
-        <div class="card-header">Reference Image</div>
-        <div class="card-body">
-          <div class="field">
-            <label class="btn btn-outline-light btn-sm">Choose image<input type="file" id="refFile" accept="image/*" hidden></label>
-            <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
-          </div>
-          <div class="field">
-            <label for="refOpacity">Opacity</label>
-            <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
-            <output id="refOpacityOut">35%</output>
-          </div>
-          <div class="field">
-            <label for="refScale">Scale</label>
-            <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
-            <output id="refScaleOut">1×</output>
-          </div>
-          <div class="field">
-            <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
-            <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
-            <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
-            <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
-          </div>
-          <div class="hint">Shown under the canvas for tracing, never exported. While Move is on, dragging the canvas moves the image instead of drawing.</div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm">
-        <div class="card-header">Replay</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="replaySpeed">Speed</label>
-            <select class="custom-select custom-select-sm" id="replaySpeed">
-              <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
-            </select>
-          </div>
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="compress" checked>
-            <label class="custom-control-label" for="compress">Skip pauses longer than 0.6 s</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm" id="themeCard">
-        <div class="card-body">
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="dark">
-            <label class="custom-control-label" for="dark">Theme: Dark</label>
-          </div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm">
-        <div class="card-header">Keyboard Shortcuts</div>
-        <div class="card-body">
-          <dl class="keys">
-            <dt><kbd>B</kbd></dt><dd>pen</dd>
-            <dt><kbd>L</kbd></dt><dd>line</dd>
-            <dt><kbd>O</kbd></dt><dd>ellipse</dd>
-            <dt><kbd>E</kbd></dt><dd>eraser</dd>
-            <dt><kbd>S</kbd></dt><dd>select: drag a lasso or click a stroke</dd>
-            <dt><kbd>Shift</kbd> + select</dt><dd>add to or remove from the selection; while resizing, free proportions; while rotating, 15° steps; while moving, one axis</dd>
-            <dt><kbd>Ctrl+A</kbd></dt><dd>select all</dd>
-            <dt><kbd>Esc</kbd></dt><dd>deselect</dd>
-            <dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>nudge the selection by 1 (Shift: 10)</dd>
-            <dt><kbd>Del</kbd></dt><dd>delete the selection</dd>
-            <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd></dt><dd>copy, cut, paste; pasted strokes replay last</dd>
-            <dt><kbd>Ctrl+D</kbd></dt><dd>duplicate the selection</dd>
-            <dt><kbd>F</kbd></dt><dd>fill</dd>
-            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>weight</dd>
-            <dt><kbd>Shift</kbd> + drag</dt><dd>line at 15° steps, circle, straight pen line</dd>
-            <dt><kbd>Alt</kbd> + click</dt><dd>pick colour and weight from a stroke</dd>
-            <dt><kbd>I</kbd></dt><dd>pick with the next click</dd>
-            <dt><kbd>G</kbd></dt><dd>grid</dd>
-            <dt><kbd>Ctrl</kbd> + wheel</dt><dd>zoom at cursor, also pinch</dd>
-            <dt><kbd>+</kbd> <kbd>-</kbd></dt><dd>zoom</dd>
-            <dt><kbd>0</kbd></dt><dd>fit the page</dd>
-            <dt>wheel</dt><dd>pan, also two fingers</dd>
-            <dt><kbd>Space</kbd> + drag</dt><dd>pan, also middle button</dd>
-            <dt><kbd>Ctrl+Z</kbd></dt><dd>undo</dd>
-            <dt><kbd>Ctrl+Shift+Z</kbd></dt><dd>redo</dd>
-          </dl>
-        </div>
+<div class="pop pop-wide" id="popGallery" popover aria-label="Gallery">
+  <div class="pop-head">
+    <div class="input-group input-group-sm">
+      <input type="text" class="form-control" id="libName" placeholder="Name">
+      <div class="input-group-append">
+        <button class="btn btn-primary" id="libUpdate" hidden>Update</button>
+        <button class="btn btn-primary" id="libSave">Save</button>
       </div>
     </div>
-
-    <div class="panel" data-panel="import" hidden>
-      <div class="card shadow-sm">
-        <div class="card-header">SVG</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="svgFills">Fills</label>
-            <select class="custom-select custom-select-sm" id="svgFills">
-              <option value="hatch">hatch</option><option value="outline">outline</option><option value="none">skip</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="svgColors">Colours</label>
-            <select class="custom-select custom-select-sm" id="svgColors">
-              <option value="snap">snap to palette</option><option value="exact">exact colours</option>
-            </select>
-          </div>
-          <div class="field">
-            <label class="btn btn-outline-light btn-sm">Choose SVG<input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden></label>
-          </div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm">
-        <div class="card-header">Photo to Line Art</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="photoMode">Mode</label>
-            <select class="custom-select custom-select-sm" id="photoMode">
-              <option value="edges">edges (photos)</option><option value="sketch">sketch (clean lines)</option><option value="dark">dark lines (scans, pencil)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="photoDetail">Detail</label>
-            <input type="range" class="custom-range" id="photoDetail" min="0" max="200" value="50">
-            <output id="photoDetailOut">50</output>
-          </div>
-          <div class="field">
-            <label for="photoMin">Min length</label>
-            <input type="range" class="custom-range" id="photoMin" min="2" max="40" value="8">
-            <output id="photoMinOut">8</output>
-          </div>
-          <div class="field">
-            <label for="photoZoom">Zoom</label>
-            <input type="range" class="custom-range" id="photoZoom" min="1" max="4" step="0.05" value="1">
-            <output id="photoZoomOut">1×</output>
-          </div>
-          <div class="field">
-            <label for="photoPanX">Move X</label>
-            <input type="range" class="custom-range" id="photoPanX" min="-1" max="1" step="0.05" value="0">
-            <output id="photoPanXOut">0</output>
-          </div>
-          <div class="field">
-            <label for="photoPanY">Move Y</label>
-            <input type="range" class="custom-range" id="photoPanY" min="-1" max="1" step="0.05" value="0">
-            <output id="photoPanYOut">0</output>
-          </div>
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="photoColors">
-            <label class="custom-control-label" for="photoColors">Photo colours</label>
-          </div>
-          <div class="field">
-            <label class="btn btn-outline-light btn-sm">Choose photo<input type="file" id="photoFile" accept="image/*" hidden></label>
-          </div>
-        </div>
-      </div>
-
-      <div class="card shadow-sm">
-        <div class="card-header">Handwritten Text</div>
-        <div class="card-body">
-          <textarea class="form-control" id="text" rows="3" placeholder="Hello from far away"></textarea>
-          <div class="field">
-            <label for="font">Font</label>
-            <select class="custom-select custom-select-sm" id="font">
-              <option value="cursive">cursive</option>
-              <option value="'Comic Sans MS', 'Comic Neue', cursive">Comic</option>
-              <option value="'Segoe Print', 'Bradley Hand', cursive">Print</option>
-              <option value="'Brush Script MT', 'Brush Script', cursive">Brush</option>
-              <option value="serif">serif</option>
-              <option value="sans-serif">sans</option>
-              <option value="monospace">mono</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="textAlign">Position</label>
-            <select class="custom-select custom-select-sm" id="textAlign"><option value="top">top</option><option value="middle">middle</option><option value="bottom">bottom</option></select>
-          </div>
-          <div class="field">
-            <label for="textSize">Size</label>
-            <input type="range" class="custom-range" id="textSize" min="24" max="140" value="56">
-            <output id="textSizeOut">56</output>
-          </div>
-          <div class="field"><button class="btn btn-primary btn-sm" id="writeText">Write</button></div>
-        </div>
-      </div>
-      <div class="hint">Imports use the current colour and weight. Moving a slider redoes the last import in place.</div>
-    </div>
-
-    <div class="panel" data-panel="library" hidden>
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <div class="input-group input-group-sm">
-            <input type="text" class="form-control" id="libName" placeholder="Name">
-            <div class="input-group-append">
-              <button class="btn btn-primary" id="libUpdate" hidden>Update</button>
-              <button class="btn btn-primary" id="libSave">Save</button>
-            </div>
-          </div>
-          <div class="hint" id="libOpened" hidden></div>
-          <div class="field">
-            <button class="btn btn-outline-light btn-sm" id="libExport">Export all</button>
-            <label class="btn btn-outline-light btn-sm">Import<input type="file" id="libImport" accept=".json,application/json" hidden></label>
-          </div>
-          <div class="hint">Drawings live in this browser only and are deleted with the extension. Export a backup now and then.</div>
-        </div>
-      </div>
-      <div class="grid" id="libList"></div>
-    </div>
-
-    <div class="panel" data-panel="json" hidden>
-      <div class="card shadow-sm">
-        <div class="card-header">Recipient</div>
-        <div class="card-body">
-          <div class="field">
-            <label for="friend">Friend</label>
-            <select class="custom-select custom-select-sm" id="friend"><option value="">other id</option></select>
-          </div>
-          <div class="field">
-            <label for="target">User id</label>
-            <input type="number" class="form-control form-control-sm" id="target" placeholder="target_user">
-          </div>
-          <div class="custom-control custom-checkbox">
-            <input type="checkbox" class="custom-control-input" id="render" checked>
-            <label class="custom-control-label" for="render">render</label>
-          </div>
-        </div>
-      </div>
-      <div class="card shadow-sm json-card">
-        <div class="card-header d-flex">SDJ
-          <span class="spacer"></span>
-          <button class="btn btn-outline-light btn-sm" id="copy">Copy</button>
-          <button class="btn btn-outline-light btn-sm" id="load">Load from text</button>
-        </div>
-        <textarea class="form-control" id="out" spellcheck="false"></textarea>
-      </div>
-    </div>
-    <div class="status"><span id="status"></span><progress id="progress" max="1" hidden></progress></div>
-  </aside>
+    <button class="btn btn-outline-light btn-sm" id="libExport">Export all</button>
+    <label class="btn btn-outline-light btn-sm" tabindex="0">Import<input type="file" id="libImport" accept=".json,application/json" hidden></label>
+  </div>
+  <div class="hint" id="libOpened" hidden></div>
+  <div class="grid" id="libList"></div>
+  <div class="hint">Drawings live in this browser only and are deleted with the extension. Export a backup now and then.</div>
 </div>
+
+<div class="pop" id="popActions" popover aria-label="Actions">
+  <div class="tabs" id="tabs" role="tablist">
+    <button class="tab active" data-tab="add" role="tab" aria-selected="true">Add</button>
+    <button class="tab" data-tab="canvas" role="tab" aria-selected="false">Canvas</button>
+    <button class="tab" data-tab="share" role="tab" aria-selected="false">Share</button>
+    <button class="tab" data-tab="video" role="tab" aria-selected="false">Replay</button>
+    <button class="tab" data-tab="prefs" id="prefsTab" role="tab" aria-selected="false">Prefs</button>
+    <button class="tab" data-tab="help" role="tab" aria-selected="false">Help</button>
+  </div>
+
+  <div class="panel" data-panel="add" role="tabpanel">
+    <section>
+      <div class="field"><h3>SVG</h3><label class="btn btn-outline-light btn-sm" tabindex="0">Choose SVG<input type="file" id="svgFile" accept=".svg,image/svg+xml" hidden></label></div>
+      <div class="field">
+        <label for="svgFills">Fills</label>
+        <select class="custom-select custom-select-sm" id="svgFills">
+          <option value="hatch">hatch</option><option value="outline">outline</option><option value="none">skip</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="svgColors">Colours</label>
+        <select class="custom-select custom-select-sm" id="svgColors">
+          <option value="snap">snap to palette</option><option value="exact">exact colours</option>
+        </select>
+      </div>
+    </section>
+    <section>
+      <div class="field"><h3>Photo to line art</h3><label class="btn btn-outline-light btn-sm" tabindex="0">Choose photo<input type="file" id="photoFile" accept="image/*" hidden></label></div>
+      <div class="field">
+        <label for="photoMode">Mode</label>
+        <select class="custom-select custom-select-sm" id="photoMode">
+          <option value="edges">edges (photos)</option><option value="sketch">sketch (clean lines)</option><option value="dark">dark lines (scans, pencil)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="photoDetail">Detail</label>
+        <input type="range" class="custom-range" id="photoDetail" min="0" max="200" value="50">
+        <output id="photoDetailOut">50</output>
+      </div>
+      <div class="field">
+        <label for="photoMin">Min length</label>
+        <input type="range" class="custom-range" id="photoMin" min="2" max="40" value="8">
+        <output id="photoMinOut">8</output>
+      </div>
+      <div class="field">
+        <label for="photoZoom">Zoom</label>
+        <input type="range" class="custom-range" id="photoZoom" min="1" max="4" step="0.05" value="1">
+        <output id="photoZoomOut">1×</output>
+      </div>
+      <div class="field">
+        <label for="photoPanX">Move X</label>
+        <input type="range" class="custom-range" id="photoPanX" min="-1" max="1" step="0.05" value="0">
+        <output id="photoPanXOut">0</output>
+      </div>
+      <div class="field">
+        <label for="photoPanY">Move Y</label>
+        <input type="range" class="custom-range" id="photoPanY" min="-1" max="1" step="0.05" value="0">
+        <output id="photoPanYOut">0</output>
+      </div>
+      <div class="custom-control custom-switch">
+        <input type="checkbox" class="custom-control-input" id="photoColors">
+        <label class="custom-control-label" for="photoColors">Photo colours</label>
+      </div>
+    </section>
+    <section>
+      <div class="field"><h3>Handwritten text</h3><button class="btn btn-primary btn-sm" id="writeText">Write</button></div>
+      <textarea class="form-control" id="text" rows="2" placeholder="Hello from far away"></textarea>
+      <div class="field">
+        <label for="font">Font</label>
+        <select class="custom-select custom-select-sm" id="font">
+          <option value="cursive">cursive</option>
+          <option value="'Comic Sans MS', 'Comic Neue', cursive">Comic</option>
+          <option value="'Segoe Print', 'Bradley Hand', cursive">Print</option>
+          <option value="'Brush Script MT', 'Brush Script', cursive">Brush</option>
+          <option value="serif">serif</option>
+          <option value="sans-serif">sans</option>
+          <option value="monospace">mono</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="textAlign">Position</label>
+        <select class="custom-select custom-select-sm" id="textAlign"><option value="top">top</option><option value="middle">middle</option><option value="bottom">bottom</option></select>
+      </div>
+      <div class="field">
+        <label for="textSize">Size</label>
+        <input type="range" class="custom-range" id="textSize" min="24" max="140" value="56">
+        <output id="textSizeOut">56</output>
+      </div>
+    </section>
+    <div class="hint">Imports use the current colour and weight. Moving a slider redoes the last import in place.</div>
+  </div>
+
+  <div class="panel" data-panel="canvas" role="tabpanel" hidden>
+    <section>
+      <div class="field">
+        <h3>Reference image</h3>
+        <label class="btn btn-outline-light btn-sm" tabindex="0">Choose image<input type="file" id="refFile" accept="image/*" hidden></label>
+        <button class="btn btn-outline-light btn-sm" id="refClear">Remove</button>
+      </div>
+      <div class="field">
+        <label for="refOpacity">Opacity</label>
+        <input type="range" class="custom-range" id="refOpacity" min="0" max="1" step="0.05" value="0.35">
+        <output id="refOpacityOut">35%</output>
+      </div>
+      <div class="field">
+        <label for="refScale">Scale</label>
+        <input type="range" class="custom-range" id="refScale" min="0.25" max="3" step="0.05" value="1">
+        <output id="refScaleOut">1×</output>
+      </div>
+      <div class="field">
+        <button class="btn btn-outline-light btn-sm" id="refMove" aria-pressed="false">Move</button>
+        <button class="btn btn-outline-light btn-sm" id="refRotate">Rotate 90°</button>
+        <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
+        <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
+      </div>
+      <div class="hint">Shown under the canvas for tracing, never exported. While Move is on, dragging the canvas moves the image instead of drawing.</div>
+    </section>
+    <section>
+      <div class="field"><h3>Clear canvas</h3><button class="btn btn-outline-light btn-sm" id="clear">Clear</button></div>
+      <div class="hint">Removes every stroke; one undo step brings them back.</div>
+    </section>
+  </div>
+
+  <div class="panel" data-panel="share" role="tabpanel" hidden>
+    <section>
+      <h3>Recipient</h3>
+      <div class="field">
+        <label for="friend">Friend</label>
+        <select class="custom-select custom-select-sm" id="friend"><option value="">other id</option></select>
+      </div>
+      <div class="field">
+        <label for="target">User id</label>
+        <input type="number" class="form-control form-control-sm" id="target" placeholder="target_user">
+      </div>
+      <div class="custom-control custom-checkbox">
+        <input type="checkbox" class="custom-control-input" id="render" checked>
+        <label class="custom-control-label" for="render">render</label>
+      </div>
+    </section>
+    <section class="json">
+      <div class="field"><h3>SDJ</h3>
+        <button class="btn btn-outline-light btn-sm" id="copy">Copy</button>
+        <button class="btn btn-outline-light btn-sm" id="load">Load from text</button>
+      </div>
+      <textarea class="form-control" id="out" spellcheck="false" aria-label="SDJ"></textarea>
+    </section>
+  </div>
+
+  <div class="panel" data-panel="video" role="tabpanel" hidden>
+    <section>
+      <h3>Replay</h3>
+      <div class="field">
+        <label for="replaySpeed">Speed</label>
+        <select class="custom-select custom-select-sm" id="replaySpeed">
+          <option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option>
+        </select>
+      </div>
+      <div class="custom-control custom-switch">
+        <input type="checkbox" class="custom-control-input" id="compress" checked>
+        <label class="custom-control-label" for="compress">Skip pauses longer than 0.6 s</label>
+      </div>
+      <div class="hint">The recipient watches the drawing replay stroke by stroke. The play button in the top bar starts it here.</div>
+    </section>
+  </div>
+
+  <div class="panel" data-panel="prefs" role="tabpanel" hidden>
+    <section>
+      <div class="custom-control custom-switch">
+        <input type="checkbox" class="custom-control-input" id="dark">
+        <label class="custom-control-label" for="dark">Dark theme</label>
+      </div>
+    </section>
+  </div>
+
+  <div class="panel" data-panel="help" role="tabpanel" hidden>
+    <section>
+      <h3>Keyboard shortcuts</h3>
+      <dl class="keys">
+        <dt><kbd>B</kbd></dt><dd>pen</dd>
+        <dt><kbd>L</kbd></dt><dd>line</dd>
+        <dt><kbd>O</kbd></dt><dd>ellipse</dd>
+        <dt><kbd>E</kbd></dt><dd>eraser</dd>
+        <dt><kbd>F</kbd></dt><dd>fill</dd>
+        <dt><kbd>S</kbd></dt><dd>select: drag a lasso or click a stroke</dd>
+        <dt><kbd>Shift</kbd> + select</dt><dd>add to or remove from the selection; while resizing, free proportions; while rotating, 15° steps; while moving, one axis</dd>
+        <dt><kbd>Ctrl+A</kbd></dt><dd>select all</dd>
+        <dt><kbd>Esc</kbd></dt><dd>deselect, or close a menu</dd>
+        <dt><kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd></dt><dd>nudge the selection by 1 (Shift: 10)</dd>
+        <dt><kbd>Del</kbd></dt><dd>delete the selection</dd>
+        <dt><kbd>Ctrl+C</kbd> <kbd>Ctrl+X</kbd> <kbd>Ctrl+V</kbd></dt><dd>copy, cut, paste; pasted strokes replay last</dd>
+        <dt><kbd>Ctrl+D</kbd></dt><dd>duplicate the selection</dd>
+        <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>weight</dd>
+        <dt><kbd>Shift</kbd> + drag</dt><dd>line at 15° steps, circle, straight pen line</dd>
+        <dt><kbd>Alt</kbd> + click</dt><dd>pick colour and weight from a stroke</dd>
+        <dt><kbd>I</kbd></dt><dd>pick with the next click</dd>
+        <dt><kbd>G</kbd></dt><dd>grid</dd>
+        <dt><kbd>Ctrl</kbd> + wheel</dt><dd>zoom at cursor, also pinch</dd>
+        <dt><kbd>+</kbd> <kbd>-</kbd></dt><dd>zoom</dd>
+        <dt><kbd>0</kbd></dt><dd>fit the page</dd>
+        <dt>wheel</dt><dd>pan, also two fingers</dd>
+        <dt><kbd>Space</kbd> + drag</dt><dd>pan, also middle button</dd>
+        <dt><kbd>Ctrl+Z</kbd></dt><dd>undo</dd>
+        <dt><kbd>Ctrl+Shift+Z</kbd></dt><dd>redo</dd>
+      </dl>
+      <div class="hint">Tap the active tool again for its options.</div>
+    </section>
+  </div>
+</div>
+
+<div class="pop" id="popGuides" popover aria-label="Canvas guides">
+  <div class="field">
+    <label for="symmetry">Symmetry</label>
+    <select class="custom-select custom-select-sm" id="symmetry"></select>
+  </div>
+  <div class="custom-control custom-switch">
+    <input type="checkbox" class="custom-control-input" id="gridOn">
+    <label class="custom-control-label" for="gridOn">Show grid, centre and thirds</label>
+  </div>
+  <div class="custom-control custom-switch">
+    <input type="checkbox" class="custom-control-input" id="snapOn">
+    <label class="custom-control-label" for="snapOn">Snap to grid</label>
+  </div>
+  <div class="field">
+    <label for="gridSpacing">Spacing</label>
+    <select class="custom-select custom-select-sm" id="gridSpacing"></select>
+  </div>
+  <div class="hint">Snap moves line and ellipse corners and the start of a pen stroke to the nearest grid crossing. The grid is never sent.</div>
+</div>
+
+<div class="pop" id="popBrush" popover aria-label="Brush options">
+  <div class="custom-control custom-switch">
+    <input type="checkbox" class="custom-control-input" id="rainbow">
+    <label class="custom-control-label" for="rainbow">Rainbow</label>
+  </div>
+  <div class="hint">Rainbow cycles the 12 standard colours along pen, line and ellipse strokes. Smoothing is the lower slider on the left.</div>
+</div>
+
+<div class="pop" id="popEraser" popover aria-label="Eraser options">
+  <div class="field">
+    <label for="eraserMode">Mode</label>
+    <select class="custom-select custom-select-sm" id="eraserMode">
+      <option value="whole">whole strokes</option><option value="cut">cut</option>
+    </select>
+  </div>
+  <div class="hint">Cut erases only what the eraser passes over and splits the strokes there; its size follows the brush weight.</div>
+</div>
+
+<div class="pop" id="popFill" popover aria-label="Fill options">
+  <div class="field">
+    <label for="fillStyle">Style</label>
+    <select class="custom-select custom-select-sm" id="fillStyle">
+      <option value="hatch">hatch</option><option value="cross">cross-hatch</option><option value="scribble">scribble</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="fillAngle">Angle</label>
+    <input type="range" class="custom-range" id="fillAngle" min="0" max="175" step="5" value="45">
+    <output id="fillAngleOut">45°</output>
+  </div>
+  <div class="field">
+    <label for="fillSpacing">Spacing</label>
+    <input type="range" class="custom-range" id="fillSpacing" min="1.2" max="6" step="0.2" value="2">
+    <output id="fillSpacingOut">2×</output>
+  </div>
+  <div class="hint">Fill hatches the closed shape you click, in the current colour and weight. Spacing is in stroke widths. Small gaps in the outline are ignored; a shape that is open to the page edge fills the whole open area.</div>
+</div>
+
+<div class="pop" id="popColor" popover aria-label="Colour">
+  <div class="drawing-colors" id="colors"></div>
+  <div class="field custom-color">
+    <input type="color" id="customColor" value="#7e57c2" aria-label="Custom colour">
+    <button class="btn btn-outline-light btn-sm" id="addColor">Add colour</button>
+  </div>
+  <div class="hint">Colours after the first 12 and sizes other than 1, 3 and 6 pass the editor's checks but are not verified with the Slowly apps.</div>
+</div>
+
 <script type="module" src="main.js"></script>
 </body>
 </html>

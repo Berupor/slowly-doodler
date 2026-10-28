@@ -428,7 +428,7 @@ export function createSelector(env) {
       e.preventDefault();
       place(items(), {}, 1);
     } else if (!sel.size || mod || e.altKey) return;
-    else if (k === 'escape') clear();
+    else if (k === 'escape') { if (!document.querySelector(':popover-open')) clear(); }
     else if (k === 'delete' || k === 'backspace') { e.preventDefault(); remove(); }
     else if (ARROWS[k]) {
       e.preventDefault();
