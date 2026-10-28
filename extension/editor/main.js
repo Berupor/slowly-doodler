@@ -34,6 +34,7 @@ const IMPORT_PRESETS = {
   scan: { detail: 50, weight: 3, mode: 'dark', fills: 'outline' },
 };
 const PHOTO_DETAIL_SCALE = 2;
+const SCALE_EPS = 1e-3;
 const PHOTO_STROKES_BASE = 40, PHOTO_STROKES_PER_DETAIL = 10;
 const PHOTO_MIN_LENGTH = [20, 4], PHOTO_MIN_LENGTH_DROP = 0.25;
 /** @type {Record<string, number>} */
@@ -425,7 +426,11 @@ const selector = createSelector({
     setDoc(next); sessionStart = null; changed();
   },
   elementOf: s => elementOf.get(s),
-  transformed: m => { if (pending) pending.m = compose(m, pending.m); },
+  transformed: m => {
+    if (!pending) return;
+    pending.m = compose(m, pending.m);
+    if (pending.kind !== 'text' && Math.abs(Math.abs(m[0] * m[3] - m[1] * m[2]) - 1) > SCALE_EPS) retraceSoon();
+  },
   setTool: t => { tool = t; buildBars(); },
   addPalette: extra => {
     palette = { ...palette, ...extra };
@@ -852,11 +857,11 @@ function setRange(id, value) {
 async function trace(p, onProgress) {
   const preset = IMPORT_PRESETS[$('importPreset').value];
   const detail = Number($('importDetail').value), w = Number($('importWeight').value), colors = $('importColors').value;
-  if (p.kind === 'svg') return importSvg(String(p.source), { fills: preset.fills, colors, color, weight: w, detail, onProgress });
+  if (p.kind === 'svg') return importSvg(String(p.source), { fills: preset.fills, colors, color, weight: w, detail, place: p.m, onProgress });
   if (p.kind === 'photo') return {
     polylines: photoToPolylines(/** @type {ImageBitmap} */ (p.source), {
       mode: preset.mode, detail: PHOTO_DETAIL_SCALE * detail, maxStrokes: PHOTO_STROKES_BASE + PHOTO_STROKES_PER_DETAIL * detail,
-      minLength: Math.max(PHOTO_MIN_LENGTH[1], PHOTO_MIN_LENGTH[0] - detail * PHOTO_MIN_LENGTH_DROP), color, weight: w, photoColors: colors !== 'one',
+      minLength: Math.max(PHOTO_MIN_LENGTH[1], PHOTO_MIN_LENGTH[0] - detail * PHOTO_MIN_LENGTH_DROP), color, weight: w, photoColors: colors !== 'one', place: p.m,
     }),
   };
   return { polylines: textToPolylines($('text').value.trim(), { font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight: w }) };
@@ -879,7 +884,8 @@ function retrace() {
       const { polylines, palette: extra = {}, dropped } = await trace(p, onProgress);
       if (pending !== p || run !== p.run) return;
       p.palette = extra;
-      placePending(S.timed(polylines, nextStart()).map(s => transformStroke(s, p.m)));
+      const timed = S.timed(polylines, nextStart());
+      placePending(p.kind === 'text' ? timed.map(s => transformStroke(s, p.m)) : timed);
       const points = p.made.reduce((a, s) => a + s.points.length, 0);
       say(`${p.made.length} strokes, ${points} points` + (dropped ? `, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes` : ''));
     } catch (err) {

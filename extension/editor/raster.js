@@ -26,6 +26,7 @@ const BILATERAL_PASSES = 2;
 const BILATERAL_RADIUS = 3;
 const BILATERAL_SIGMA_S = 2;
 const BILATERAL_SIGMA_R = 18;
+const CROP_MARGIN = 12;
 
 function thin(img, w, h) {
   const del = [];
@@ -522,10 +523,66 @@ function withinBudget(strokes, minLength, high, maxStrokes) {
   return out;
 }
 
-function visibleSpan(view, size, pan) {
-  const centred = (view - size) / 2;
-  const start = centred + pan * Math.max(Math.abs(centred), view / 2);
-  return { start, from: Math.max(0, start), to: Math.min(view, start + size) };
+const IDENTITY = [1, 0, 0, 1, 0, 0];
+const applyMatrix = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+
+/** @param {number[]} a @param {number[]} b Liang-Barsky clip of a segment to the canvas @returns {[number[], number[], boolean] | null} */
+function clipSegment([ax, ay], [bx, by]) {
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dy = by - ay;
+  for (const [p, q] of [[-dx, ax], [dx, W - ax], [-dy, ay], [dy, H - ay]]) {
+    if (p === 0) { if (q < 0) return null; continue; }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+    if (t0 > t1) return null;
+  }
+  return [[ax + t0 * dx, ay + t0 * dy], [ax + t1 * dx, ay + t1 * dy], t1 < 1];
+}
+
+/** Pieces of a polyline that lie on the canvas, cut where it crosses the edge. @param {number[][]} pts @returns {number[][][]} */
+export function clipToCanvas(pts) {
+  if (pts.length === 1) return pts[0][0] >= 0 && pts[0][0] <= W && pts[0][1] >= 0 && pts[0][1] <= H ? [pts] : [];
+  const out = [];
+  let run = [];
+  const flush = () => { if (run.length > 1) out.push(run); run = []; };
+  for (let i = 1; i < pts.length; i++) {
+    const seg = clipSegment(pts[i - 1], pts[i]);
+    if (!seg) { flush(); continue; }
+    if (!run.length) run.push(seg[0]);
+    run.push(seg[1]);
+    if (seg[2]) flush();
+  }
+  flush();
+  return out;
+}
+
+/**
+ * The part of an image that a placement shows: the image is fitted inside PAD and centred, then moved by place.
+ * Returns the source rectangle that lands on the canvas, the trace size (at most the source resolution, at most
+ * the canvas resolution) and toCanvas, the map from trace pixels to the canvas. Null when nothing is on the canvas.
+ * @param {number} width @param {number} height @param {number[]} [place]
+ */
+export function placementCrop(width, height, place = IDENTITY) {
+  const k = Math.min((W - 2 * PAD) / width, (H - 2 * PAD) / height);
+  const tx = (W - width * k) / 2, ty = (H - height * k) / 2;
+  const [a, b, c, d, e, f] = place;
+  const m = [a * k, b * k, c * k, d * k, a * tx + c * ty + e, b * tx + d * ty + f];
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (!det) return null;
+  const inv = [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det, (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
+  const scale = Math.sqrt(Math.abs(det)), s = Math.min(1, scale);
+  const corners = [[0, 0], [W, 0], [0, H], [W, H]].map(([x, y]) => applyMatrix(inv, x, y));
+  const margin = CROP_MARGIN / s;
+  const sx = Math.max(0, Math.floor(Math.min(...corners.map(p => p[0])) - margin)), ex = Math.min(width, Math.ceil(Math.max(...corners.map(p => p[0])) + margin));
+  const sy = Math.max(0, Math.floor(Math.min(...corners.map(p => p[1])) - margin)), ey = Math.min(height, Math.ceil(Math.max(...corners.map(p => p[1])) + margin));
+  if (ex <= sx || ey <= sy) return null;
+  const w = Math.max(1, Math.round((ex - sx) * s)), h = Math.max(1, Math.round((ey - sy) * s));
+  const kx = (ex - sx) / w, ky = (ey - sy) / h;
+  return {
+    sx, sy, sw: ex - sx, sh: ey - sy, w, h,
+    toCanvas: [m[0] * kx, m[1] * kx, m[2] * ky, m[3] * ky, m[0] * sx + m[2] * sy + m[4], m[1] * sx + m[3] * sy + m[5]],
+    enlarged: (scale / s) / (k / Math.min(1, k)),
+  };
 }
 
 /**
@@ -541,31 +598,37 @@ export function centerlines(mask, w, h) {
     .filter(p => p.length > 1);
 }
 
-export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false, zoom = 1, panX = 0, panY = 0 }) {
-  const scale = Math.min((W - 2 * PAD) / image.width, (H - 2 * PAD) / image.height) * zoom;
-  const xs = visibleSpan(W, image.width * scale, panX), ys = visibleSpan(H, image.height * scale, panY);
-  const sx = (xs.from - xs.start) / scale, sy = (ys.from - ys.start) / scale;
-  const sw = (xs.to - xs.from) / scale, sh = (ys.to - ys.from) / scale;
-  const s = Math.min(1, scale);
-  const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
-  const ctx = canvas2d(w, h);
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, w, h);
-  const { data } = ctx.getImageData(0, 0, w, h);
+/**
+ * @typedef {{ mode?: string, detail?: number, minLength?: number, maxStrokes?: number, color: string, weight: number, photoColors?: boolean, place?: number[] }} PhotoOptions
+ * minLength is in trace pixels of the fitted placement; place is the matrix the user moved and scaled the import by.
+ */
+
+/**
+ * Line art for the crop of a photo, in canvas units; lines that leave the canvas are cut at its edge.
+ * @param {Uint8ClampedArray} data RGBA of the crop at the trace size @param {NonNullable<ReturnType<typeof placementCrop>>} crop @param {PhotoOptions} opts
+ */
+export function traceCrop(data, { w, h, toCanvas, enlarged }, { mode = 'edges', detail = 50, minLength = 8, maxStrokes = LIMITS.strokes, color, weight, photoColors = false }) {
   const g = grayscale(data, w, h);
   stretchLevels(g);
   const lines = (DETECTORS[mode] || DETECTORS.edges)(mode === 'dark' ? g : flattenTexture(g, w, h), w, h, detail);
   thin(lines.mask, w, h);
   dropCornerPixels(lines.mask, w, h);
-  const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength, lines.high, maxStrokes)
+  const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength / enlarged, lines.high, maxStrokes)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
-  const kx = (xs.to - xs.from) / w, ky = (ys.to - ys.from) / h;
-  const ox = xs.from, oy = ys.from;
-  return strokes.map(({ pts }) => ({
-    color: photoColors ? nearestBase(inkColour(data, w, h, pts)) : color,
-    weight,
-    pts: pts.map(([x, y]) => [x * kx + ox, y * ky + oy]),
-  }));
+  return strokes.flatMap(({ pts }) => {
+    const ink = photoColors ? nearestBase(inkColour(data, w, h, pts)) : color;
+    return clipToCanvas(pts.map(([x, y]) => applyMatrix(toCanvas, x, y))).map(piece => ({ color: ink, weight, pts: piece }));
+  }).slice(0, LIMITS.strokes);
+}
+
+/** @param {ImageBitmap} image @param {PhotoOptions} opts */
+export function photoToPolylines(image, opts) {
+  const crop = placementCrop(image.width, image.height, opts.place);
+  if (!crop) return [];
+  const ctx = canvas2d(crop.w, crop.h);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.w, crop.h);
+  return traceCrop(ctx.getImageData(0, 0, crop.w, crop.h).data, crop, opts);
 }
 
 function canvas2d(w, h) {

@@ -1,6 +1,6 @@
 import { W, H, CANVAS_TOKEN, BASE_COLORS, LIMITS, STROKE_SCALE, customToken, rgbToHex, nearestBase, rdp } from './sdj.js';
 import { chainRows } from './fill.js';
-import { centerlines } from './raster.js';
+import { centerlines, clipToCanvas } from './raster.js';
 
 const SHAPES = 'path,line,polyline,polygon,rect,circle,ellipse';
 const NOT_RENDERED = 'defs,symbol,clipPath,mask,pattern,marker';
@@ -246,16 +246,16 @@ function pathLength(pts) {
 /**
  * A filled shape no thicker than CENTERLINE_MAX traced as its centre line, the way Illustrator's Image Trace turns
  * regions thinner than "stroke max width" into strokes. Null for thicker shapes.
- * @param {number[][][]} subpaths canvas units @param {CanvasFillRule} rule
+ * @param {number[][][]} subpaths canvas units @param {CanvasFillRule} rule @param {number} placeScale how much the user enlarged the import
  */
-function centreOf(subpaths, rule) {
+function centreOf(subpaths, rule, placeScale) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, perimeter = 0;
   for (const sp of subpaths) {
     perimeter += pathLength(sp) + Math.hypot(sp[0][0] - sp[sp.length - 1][0], sp[0][1] - sp[sp.length - 1][1]);
     for (const [x, y] of sp) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
   }
   if (!perimeter || Math.min(x1 - x0, y1 - y0) <= 0) return null;
-  const k = CENTERLINE_PX, pad = 2;
+  const k = CENTERLINE_PX / placeScale, pad = 2;
   const w = Math.ceil((x1 - x0) * k) + 2 * pad, h = Math.ceil((y1 - y0) * k) + 2 * pad;
   const ctx = /** @type {OffscreenCanvasRenderingContext2D} */ (new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true }));
   const path = new Path2D();
@@ -268,7 +268,7 @@ function centreOf(subpaths, rule) {
   const mask = new Uint8Array(w * h);
   let area = 0;
   for (let i = 0; i < mask.length; i++) if (rgba[i * 4 + 3] > 127) { mask[i] = 1; area++; }
-  if (2 * area / (k * k) / perimeter > CENTERLINE_MAX) return null;
+  if (2 * area / (k * k) / perimeter > CENTERLINE_MAX * placeScale) return null;
   return centerlines(mask, w, h).map(p => p.map(([x, y]) => [(x - pad) / k + x0, (y - pad) / k + y0]));
 }
 
@@ -300,10 +300,11 @@ function yielder(onProgress) {
  * fills: outline draws filled shapes by their edge, hatch adds hatching inside, none skips them; thin filled shapes become centre lines either way.
  * colors: one paints everything with color, snap picks the nearest palette colour, exact adds custom colours.
  * weight: the weight of every stroke; remix keeps the weights from stroke-width. detail 0-100 sets how closely lines follow the curves.
+ * place: the matrix the user moved and scaled the fitted import by; lines are flattened at the placed size and cut at the canvas edge.
  * @param {string} text
- * @param {{ fills?: string, colors?: string, color?: string, weight?: number, detail?: number, remix?: boolean, onProgress?: (fraction: number) => void }} [options]
+ * @param {{ fills?: string, colors?: string, color?: string, weight?: number, detail?: number, remix?: boolean, place?: number[], onProgress?: (fraction: number) => void }} [options]
  */
-export async function importSvg(text, { fills = 'outline', colors = 'snap', color = 'black', weight = 1, detail = 50, remix = false, onProgress } = {}) {
+export async function importSvg(text, { fills = 'outline', colors = 'snap', color = 'black', weight = 1, detail = 50, remix = false, place = [1, 0, 0, 1, 0, 0], onProgress } = {}) {
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
   const src = /** @type {Element} */ (doc.documentElement);
   if (src.nodeName !== 'svg') throw new Error('not an svg file');
@@ -321,7 +322,8 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
     const vb = host.viewBox.baseVal;
     const keep = remix && vb && Math.abs(vb.width - W) < 1;
     const bbox = host.getBBox();
-    const kGuess = keep ? 1 : Math.min((W - 2 * PAD) / (bbox.width || 1), (H - 2 * PAD) / (bbox.height || 1));
+    const placeScale = Math.sqrt(Math.abs(place[0] * place[3] - place[1] * place[2])) || 1;
+    const kGuess = placeScale * (keep ? 1 : Math.min((W - 2 * PAD) / (bbox.width || 1), (H - 2 * PAD) / (bbox.height || 1)));
 
     const shapes = [];
     for (const el of /** @type {NodeListOf<SVGGeometryElement>} */ (host.querySelectorAll(SHAPES))) {
@@ -361,7 +363,11 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
       ox = (W - (maxX - minX) * k) / 2;
       oy = (H - (maxY - minY) * k) / 2;
     }
-    const map = sp => sp.map(([x, y]) => [(x - minX) * k + ox, (y - minY) * k + oy]);
+    const [pa, pb, pc, pd, pe, pf] = place;
+    const map = sp => sp.map(([x, y]) => {
+      const fx = (x - minX) * k + ox, fy = (y - minY) * k + oy;
+      return [pa * fx + pc * fy + pe, pb * fx + pd * fy + pf];
+    });
     const eps = remix ? 0 : EPS_COARSE + (EPS_FINE - EPS_COARSE) * Math.min(100, Math.max(0, detail)) / 100;
     const simplify = pts => eps ? rdp(pts, eps) : pts;
 
@@ -391,7 +397,7 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
         const w = weightOf(s.sw * k / STROKE_SCALE);
         for (const pts of subpaths) polylines.push({ color: strokeToken, weight: w, pts: simplify(pts) });
       }
-      const centre = s.fill && !s.stroke && !remix ? centreOf(subpaths, s.rule) : null;
+      const centre = s.fill && !s.stroke && !remix ? centreOf(subpaths, s.rule, placeScale) : null;
       if (centre?.length) for (const pts of centre) polylines.push({ color: fillToken, weight, pts: simplify(pts) });
       else if (s.fill && fills !== 'none') {
         if (!s.stroke) for (const pts of subpaths) polylines.push({ color: fillToken, weight: weightOf(1), pts: simplify(pts) });
@@ -400,8 +406,9 @@ export async function importSvg(text, { fills = 'outline', colors = 'snap', colo
       }
       await tick(0.8 + 0.2 * (n + 1) / shapes.length);
     }
-    const kept = fitBudget(polylines);
-    return { polylines: kept, palette, dropped: polylines.length - kept.length };
+    const onCanvas = remix ? polylines : polylines.flatMap(p => clipToCanvas(p.pts).map(pts => ({ ...p, pts })));
+    const kept = fitBudget(onCanvas);
+    return { polylines: kept, palette, dropped: onCanvas.length - kept.length };
   } finally {
     host.remove();
   }

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerlines } from '../extension/editor/raster.js';
+import { centerlines, placementCrop, traceCrop, clipToCanvas } from '../extension/editor/raster.js';
+import { W as CW, H as CH, LIMITS } from '../extension/editor/sdj.js';
 
 const W = 120, H = 120;
 
@@ -48,5 +49,55 @@ describe('centerlines', () => {
   it('keeps few points on a straight run', () => {
     const lines = centerlines(mask((x, y) => x > 10 && x < 110 && Math.abs(y - 30) < 3), W, H);
     assert.ok(lines[0].length <= 6, `${lines[0].length} points`);
+  });
+});
+
+/** @param {(x: number, y: number) => boolean} dark @param {NonNullable<ReturnType<typeof placementCrop>>} crop */
+function render(dark, { sx, sy, sw, sh, w, h }) {
+  const data = new Uint8ClampedArray(w * h * 4).fill(255);
+  for (let v = 0; v < h; v++)
+    for (let u = 0; u < w; u++)
+      if (dark(sx + (u + 0.5) * sw / w, sy + (v + 0.5) * sh / h)) data.fill(20, (v * w + u) * 4, (v * w + u) * 4 + 3);
+  return data;
+}
+
+const onBorder = (/** @type {number[]} */ [x, y]) => [x, y, x - CW, y - CH].some(d => Math.abs(d) < 1e-6);
+
+describe('retrace of an enlarged photo', () => {
+  const rings = (/** @type {number} */ x, /** @type {number} */ y) => Math.abs(Math.hypot(x - 300, y - 225) % 40 - 20) < 4;
+  const enlarged = [3, 0, 0, 3, -2 * CW / 2, -2 * CH / 2];
+
+  it('traces only the source pixels on the canvas and cuts lines at the canvas edge', () => {
+    const crop = placementCrop(600, 450, enlarged);
+    assert.ok(crop && crop.sw < 300 && crop.sh < 450, JSON.stringify(crop));
+    const lines = traceCrop(render(rings, crop), crop, { color: 'black', weight: 1, detail: 30, minLength: 16 });
+    assert.ok(lines.length > 10, `${lines.length} strokes`);
+    for (const { pts } of lines) for (const [x, y] of pts) assert.ok(x >= 0 && x <= CW && y >= 0 && y <= CH, `${x} ${y} is off the canvas`);
+    const cut = lines.filter(({ pts }) => onBorder(pts[0]) || onBorder(pts[pts.length - 1]));
+    assert.ok(cut.length > 0, 'rings run past the edge, so some lines end on it');
+    for (const { pts } of lines)
+      for (let i = 1; i < pts.length; i++)
+        assert.ok(!(onBorder(pts[i - 1]) && onBorder(pts[i]) && (pts[i - 1][0] === pts[i][0] || pts[i - 1][1] === pts[i][1])), 'a line runs along the edge: clamped, not cut');
+  });
+
+  it('stays within the limits on a busy pattern', () => {
+    const checks = (/** @type {number} */ x, /** @type {number} */ y) => (Math.floor(x / 3) + Math.floor(y / 3)) % 2 === 0;
+    const crop = placementCrop(1200, 900, [1.5, 0, 0, 1.5, -CW / 4, -CH / 4]);
+    assert.ok(crop);
+    const lines = traceCrop(render(checks, crop), crop, { color: 'black', weight: 1, detail: 120, minLength: 1 });
+    assert.ok(lines.length <= LIMITS.strokes, `${lines.length} strokes`);
+    assert.ok(lines.reduce((n, l) => n + l.pts.length, 0) <= LIMITS.points);
+    for (const { pts } of lines) assert.ok(pts.length <= LIMITS.pointsPerStroke);
+  });
+
+  it('traces nothing when the placement is pushed off the canvas', () => {
+    assert.equal(placementCrop(600, 450, [1, 0, 0, 1, CW * 2, 0]), null);
+  });
+});
+
+describe('clipToCanvas', () => {
+  it('splits a line that leaves and re-enters the canvas at the crossings', () => {
+    const pieces = clipToCanvas([[100, 100], [-100, 100], [-100, 200], [100, 200]]);
+    assert.deepEqual(pieces, [[[100, 100], [0, 100]], [[0, 200], [100, 200]]]);
   });
 });
