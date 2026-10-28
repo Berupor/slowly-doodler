@@ -6,6 +6,7 @@ import * as P from './precision.js';
 import { createSelector, compose, transformStroke, IDENTITY } from './select.js';
 import * as F from './fill.js';
 import * as L from './layers.js';
+import { handDrawn } from './sketchy.js';
 
 const { W, H } = S;
 const NS = 'http://www.w3.org/2000/svg';
@@ -123,7 +124,7 @@ let sessionStart = null;
 let replay = null;
 /**
  * An import being placed: its strokes are previewed and transformed by the selector but are not part of the drawing until Done.
- * @typedef {{ kind: 'svg' | 'photo' | 'text', source: string | ImageBitmap, name: string, made: S.Stroke[], palette: S.Palette, m: import('./select.js').Matrix, run: number }} Pending
+ * @typedef {{ kind: 'svg' | 'photo' | 'text', source: string | ImageBitmap, name: string, made: S.Stroke[], palette: S.Palette, m: import('./select.js').Matrix, run: number, seed: number }} Pending
  */
 /** @type {Pending | null} */
 let pending = null;
@@ -888,7 +889,7 @@ function retrace() {
       const { polylines, palette: extra = {}, dropped } = await trace(p, onProgress);
       if (pending !== p || run !== p.run) return;
       p.palette = extra;
-      const timed = S.timed(polylines, nextStart());
+      const timed = S.timed(handDrawn(polylines, { roughness: Number($('importRough').value), seed: p.seed }), nextStart());
       placePending(p.kind === 'text' ? timed.map(s => transformStroke(s, p.m)) : timed);
       const points = p.made.reduce((a, s) => a + s.points.length, 0);
       say(`${p.made.length} strokes, ${points} points` + (dropped ? `, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes` : ''));
@@ -913,7 +914,7 @@ function startImport(kind, source, name) {
   if (pending) return;
   stopReplay();
   /** @type {HTMLElement | null} */ (document.querySelector('.pop:popover-open'))?.hidePopover();
-  pending = { kind, source, name, made: [], palette: {}, m: IDENTITY, run: 0 };
+  pending = { kind, source, name, made: [], palette: {}, m: IDENTITY, run: 0, seed: Math.floor(Math.random() * 2 ** 31) };
   const presetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('importPreset'));
   const colorSelect = /** @type {HTMLSelectElement} */ (document.getElementById('importColors'));
   presetSelect.hidden = $('importDetailField').hidden = kind === 'text';
@@ -922,6 +923,7 @@ function startImport(kind, source, name) {
   if (presetSelect.selectedOptions[0]?.hidden) presetSelect.value = 'outline';
   colorSelect.value = kind === 'svg' ? 'snap' : 'one';
   applyPreset();
+  setRange('importRough', 0);
   $('importBar').hidden = false;
   tool = 'select';
   buildBars();
@@ -1416,6 +1418,7 @@ $('importPreset').onchange = () => { applyPreset(); retrace(); };
 $('importDetail').addEventListener('input', () => { $('importDetailOut').textContent = $('importDetail').value; retraceSoon(); });
 $('importWeight').addEventListener('input', () => setImportWeight(Number($('importWeight').value)));
 $('importColors').onchange = retrace;
+$('importRough').addEventListener('input', () => { $('importRoughOut').textContent = $('importRough').value; retraceSoon(); });
 $('importDone').onclick = finishImport;
 $('importCancel').onclick = cancelImport;
 
