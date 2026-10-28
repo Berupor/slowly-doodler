@@ -76,9 +76,11 @@
   }
 
   const remix = slowlyButton('btn-sm', 'pencil', 'Remix', 'position:fixed;z-index:2147483646;display:none;font-weight:600');
-  document.body.appendChild(remix);
+  const save = slowlyButton('btn-sm', 'download', 'Save', 'position:fixed;z-index:2147483646;display:none;font-weight:600');
+  document.body.append(save, remix);
   /** @type {HTMLImageElement | null} */
   let remixTarget = null;
+  let saving = false;
 
   document.addEventListener('mouseover', e => {
     if (!(e.target instanceof Element)) return;
@@ -86,18 +88,60 @@
     if (!img || overlay || img.closest(SLOWLY.thumbnail)) return;
     const r = img.getBoundingClientRect();
     if (r.width < 60) return;
+    if (saving) return;
     remixTarget = img;
-    remix.style.display = 'block';
-    Object.assign(remix.style, { left: `${r.right - remix.offsetWidth - 8}px`, top: `${r.top + 8}px` });
+    remix.style.display = save.style.display = 'block';
+    const left = r.right - remix.offsetWidth - 8;
+    Object.assign(remix.style, { left: `${left}px`, top: `${r.top + 8}px` });
+    Object.assign(save.style, { left: `${left - save.offsetWidth - 6}px`, top: `${r.top + 8}px` });
   });
+  const hideButtons = () => { remix.style.display = save.style.display = 'none'; };
   document.addEventListener('mouseout', e => {
-    if (e.relatedTarget !== remix && e.target === remixTarget) remix.style.display = 'none';
+    if (saving || e.target !== remixTarget || e.relatedTarget === remix || e.relatedTarget === save) return;
+    hideButtons();
   });
   remix.onclick = () => {
     if (!remixTarget) return;
-    remix.style.display = 'none';
+    hideButtons();
     open();
     post({ type: 'doodler:import-svg', svg: decodeSvg(remixTarget.getAttribute('src') ?? '') });
+  };
+
+  /** @param {string} name */
+  const editorModule = name => import(chrome.runtime.getURL(`editor/${name}.js`));
+
+  /** @param {string} svg @returns {Promise<number>} dropped pieces */
+  async function saveToLibrary(svg) {
+    const [S, svgImport, library] = await Promise.all([editorModule('sdj'), editorModule('import-svg'), editorModule('library')]);
+    const { polylines, palette, dropped } = await svgImport.importSvg(svg, { remix: true });
+    const sdj = S.buildSdj(S.timed(polylines, 0), palette);
+    const invalid = S.validate(sdj);
+    if (invalid) throw new Error(invalid);
+    const { friends, current } = doodlerFriends();
+    const friend = friends.find(f => f.userId === current)?.name;
+    const stamp = new Date().toLocaleString();
+    await library.saveDrawing(friend ? `${friend}, ${stamp}` : stamp, sdj);
+    return dropped;
+  }
+
+  save.onclick = async () => {
+    if (!remixTarget || saving) return;
+    const svg = decodeSvg(remixTarget.getAttribute('src') ?? '');
+    const label = /** @type {ChildNode} */ (save.lastChild);
+    saving = save.disabled = true;
+    label.textContent = ' Saving...';
+    try {
+      const dropped = await saveToLibrary(svg);
+      toast(dropped ? `Saved to Doodler library, ${dropped} smallest pieces dropped` : 'Saved to Doodler library');
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error('doodler_save_failed', { reason });
+      toast(`Could not save the drawing (${reason}).`);
+    } finally {
+      saving = save.disabled = false;
+      label.textContent = ' Save';
+      hideButtons();
+    }
   };
 
   /** @param {string} src */
