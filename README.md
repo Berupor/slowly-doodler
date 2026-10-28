@@ -31,7 +31,7 @@ No store listing. `chrome://extensions`, Developer mode, Load unpacked, pick `ex
 
 - Esc closes Doodler without sending.
 
-The top bar holds Gallery (saved drawings), Actions (add SVG, photo or text, reference image, Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers and colour on the right. Tap the active tool again for its options. Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer, and hidden or locked layers are out of reach of the eraser, lasso, eyedropper and fill. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight.
+The top bar holds Gallery (saved drawings), Actions (add SVG, photo or text, reference image, Clear, the raw sdj, replay, shortcuts), canvas guides (symmetry, grid, snapping) and lasso select on the left, tools, layers and colour on the right. Tap the active tool again for its options. Layers (up to 10) exist only in the editor and the library: Send flattens the visible ones bottom to top into one drawing, imports land on a new layer (a Remix background at the bottom), hidden or locked layers are out of reach of the eraser and lasso, and a locked layer still works as a fill outline and an eyedropper source but is not drawn on. Paste goes to the active layer, Ctrl+D copies stay on the layer of the original. The strip on the left has size, smoothing, the eyedropper and undo/redo. Keys: B pen, L line, O ellipse, E eraser, F fill, S select, `[` `]` weight.
 
 By hand, with Kaleido 12 symmetry and rainbow:
 

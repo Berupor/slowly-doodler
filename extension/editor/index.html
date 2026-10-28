@@ -59,7 +59,7 @@
     <span class="drawing-count drawing-pill" id="stats"></span>
   </div>
 
-  <div class="toast drawing-pill" id="toast" role="status" aria-live="polite"><span id="status"></span><progress id="progress" max="1" hidden></progress></div>
+  <div class="toast drawing-pill" id="toast" popover="manual" role="status" aria-live="polite"><span id="status"></span><progress id="progress" max="1" hidden></progress></div>
 </main>
 
 <div class="pop pop-wide" id="popGallery" popover aria-label="Gallery">
@@ -356,12 +356,13 @@
 <div class="pop" id="popLayers" popover aria-label="Layers">
   <div class="pop-head">
     <h3>Layers</h3>
+    <span class="layer-count" id="layerCount"></span>
     <button class="drawing-icon-button layer-add" id="layerAdd" title="Add layer" aria-label="Add layer">
       <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </button>
   </div>
   <div class="layer-list" id="layerList" role="listbox" aria-label="Layers, top first"></div>
-  <div class="hint">Layers stay in the editor: Send flattens the visible ones into one drawing.</div>
+  <div class="hint">Send flattens visible layers. Hidden layers are not sent.</div>
 </div>
 
 <div class="pop" id="popColor" popover aria-label="Colour">

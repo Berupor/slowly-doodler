@@ -206,6 +206,7 @@ function svg(tag, attrs = {}) {
  * @property {() => S.Stroke[]} strokes
  * @property {(s: S.Stroke) => boolean} pickable strokes on hidden or locked layers are not
  * @property {() => string | null} addBlocked why new strokes cannot be added now
+ * @property {() => S.Stroke[]} sent the strokes as Send would send them, hidden layers left out
  * @property {() => S.Palette} palette
  * @property {(next: S.Stroke[]) => void} commit
  * @property {(next: S.Stroke[]) => void} amend replaces the current state without a new undo step
@@ -341,19 +342,19 @@ export function createSelector(env) {
     env.commit(env.strokes().filter(s => !gone.has(s)));
   }
 
-  /** @param {S.Stroke[]} source @param {S.Palette} extra @param {number} steps */
-  function place(source, extra, steps) {
-    const why = env.addBlocked();
+  /** @param {S.Stroke[]} source @param {S.Palette} extra @param {number} steps @param {boolean} [inPlace] copies stay on the layers of the source, otherwise all go to the active layer */
+  function place(source, extra, steps, inPlace = false) {
+    const why = !inPlace && env.addBlocked();
     if (why) return env.say(why, true);
     const strokes = env.strokes();
     const appended = appendTimeline(strokes, source, env.gapMs);
     const src = /** @type {Box} */ (bounds(appended));
     const [dx, dy] = steps ? duplicateShift(src, DUPLICATE_OFFSET * steps) : [0, 0];
     const m = translate(dx, dy);
-    const added = appended.map(s => transformStroke(s, m));
+    const added = appended.map((s, i) => inPlace ? { ...transformStroke(s, m), layer: source[i].layer } : transformStroke(s, m));
     const palette = env.palette();
     const unknown = Object.fromEntries(Object.entries(extra).filter(([token]) => !palette[token] && !S.baseEntry(token)));
-    const err = pasteError(strokes, added, { ...palette, ...unknown });
+    const err = pasteError(env.sent(), added, { ...palette, ...unknown });
     if (err) return env.say(`cannot paste: ${err}`, true);
     if (Object.keys(unknown).length) env.addPalette(unknown);
     sel = new Set(added);
@@ -367,7 +368,7 @@ export function createSelector(env) {
   const paste = source => place(source.strokes, source.palette, pastes++);
 
   function duplicate() {
-    if (sel.size) place(items(), {}, 1);
+    if (sel.size) place(items(), {}, 1, true);
   }
 
   function copyJson() {
@@ -453,7 +454,7 @@ export function createSelector(env) {
       e.preventDefault();
       duplicate();
     } else if (!sel.size || mod || e.altKey) return;
-    else if (k === 'escape') { if (!document.querySelector(':popover-open')) clear(); }
+    else if (k === 'escape') { if (!document.querySelector('.pop:popover-open')) clear(); }
     else if (k === 'delete' || k === 'backspace') { e.preventDefault(); remove(); }
     else if (ARROWS[k]) {
       e.preventDefault();

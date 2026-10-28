@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSdj, validate, cutStrokes } from '../extension/editor/sdj.js';
-import { lassoPick } from '../extension/editor/select.js';
+import { LIMITS, buildSdj, validate, cutStrokes } from '../extension/editor/sdj.js';
+import { hatchRegion } from '../extension/editor/fill.js';
+import { lassoPick, pasteError } from '../extension/editor/select.js';
 import {
   MAX_LAYERS, initial, nextName, blocked, editable, visible, order, replaceEditable, flatten, add, update, move, remove, mergeDown, duplicate, pack, unpack,
 } from '../extension/editor/layers.js';
@@ -185,5 +186,60 @@ describe('pack and unpack', () => {
   it('refuses more than the layer cap', () => {
     const list = Array.from({ length: MAX_LAYERS + 1 }, (_, i) => ({ id: `l${i + 1}`, name: `Layer ${i + 1}`, hidden: false, locked: false }));
     assert.equal(unpack([], { list, active: 'l1', of: [] }).layers.length, 1);
+  });
+});
+
+describe('fill and layers', () => {
+  const raster = strokes => {
+    const w = 360, h = 480, mask = new Uint8Array(w * h);
+    for (const { points } of strokes) for (let i = 1; i < points.length; i++) {
+      const [ax, ay] = points[i - 1], [bx, by] = points[i];
+      for (let y = Math.floor(Math.min(ay, by) / 2); y <= Math.floor(Math.max(ay, by) / 2); y++)
+        for (let x = Math.floor(Math.min(ax, bx) / 2); x <= Math.floor(Math.max(ax, bx) / 2); x++) mask[y * w + x] = 1;
+    }
+    return { mask, w, h };
+  };
+  const box = { color: 'black', weight: 3, startOffset: 0, points: [[200, 200, 0], [400, 200, 50], [400, 400, 100], [200, 400, 150], [200, 200, 200]], layer: 'l1' };
+  const opts = { style: 'hatch', angle: Math.PI / 4, density: 2, weight: 3 };
+  const room = { strokes: 1000, points: 249998 };
+  const fillAt = (strokes, layers) => hatchRegion(raster(visible(strokes, layers)), [300, 300], opts, room);
+
+  it('stops at the outline of a locked layer', () => {
+    const { layers } = twoLayers();
+    const r = fillAt([box], update(layers, 'l1', { locked: true }));
+    assert.ok(!('error' in r));
+    assert.equal(r.touchesEdge, false);
+    for (const [x, y] of r.lines.flat()) assert.ok(x > 200 && x < 400 && y > 200 && y < 400, `${x},${y}`);
+  });
+
+  it('runs through the outline of a hidden layer', () => {
+    const { layers } = twoLayers();
+    const r = fillAt([box], update(layers, 'l1', { hidden: true }));
+    assert.ok(!('error' in r));
+    assert.equal(r.touchesEdge, true);
+  });
+});
+
+describe('Remix background', () => {
+  it('goes under the existing layers and plays first although it is later in time', () => {
+    const { strokes, layers } = twoLayers();
+    const made = add(layers, null, 'Background');
+    assert.deepEqual(made.layers.map(l => l.name), ['Background', 'Layer 1', 'Layer 2']);
+    const back = line(made.active, 0, 0, 720, 960, 9000);
+    const flat = flatten(order([...strokes, back], made.layers), made.layers, GAP);
+    assert.equal(flat[0], back);
+    assert.ok(flat[1].startOffset >= 9000 + 100 + GAP);
+  });
+});
+
+describe('paste limit', () => {
+  it('counts the strokes that would be sent, not those on hidden layers', () => {
+    const { layers } = twoLayers();
+    const hiddenOnes = Array.from({ length: LIMITS.strokes }, (_, i) => line('l1', 0, 0, 10, 10, i * 200));
+    const all = [...hiddenOnes, line('l2', 0, 0, 10, 10, 0)];
+    const flat = flatten(all, update(layers, 'l1', { hidden: true }), GAP);
+    const pasted = [line(undefined, 0, 0, 5, 5, 0)];
+    assert.equal(pasteError(flat, pasted, {}), null);
+    assert.match(pasteError(all, pasted, {}) ?? '', /too many strokes/);
   });
 });

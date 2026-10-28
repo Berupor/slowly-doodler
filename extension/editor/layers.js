@@ -34,7 +34,7 @@ export function blocked(layers, id) {
 
 /** @param {Layer[]} layers */
 export const shownIds = layers => new Set(layers.filter(l => !l.hidden).map(l => l.id));
-/** @param {Layer[]} layers the eraser, lasso, eyedropper and fill only see these */
+/** @param {Layer[]} layers the eraser and lasso only see these */
 export const editableIds = layers => new Set(layers.filter(l => !l.hidden && !l.locked).map(l => l.id));
 
 /** @param {Stroke[]} strokes @param {Layer[]} layers */
@@ -84,10 +84,10 @@ export function flatten(strokes, layers, gapMs) {
   return out;
 }
 
-/** @param {Layer[]} layers @param {string} active @param {string} name @returns {{ layers: Layer[], active: string }} new layer just above the active one */
+/** @param {Layer[]} layers @param {string | null} active @param {string} name @returns {{ layers: Layer[], active: string }} new layer just above the active one, at the bottom for null */
 export function add(layers, active, name) {
   const made = layer(name, nextId(layers));
-  const at = layers.findIndex(l => l.id === active) + 1 || layers.length;
+  const at = active === null ? 0 : layers.findIndex(l => l.id === active) + 1 || layers.length;
   return { layers: [...layers.slice(0, at), made, ...layers.slice(at)], active: made.id };
 }
 

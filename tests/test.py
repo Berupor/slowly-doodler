@@ -40,9 +40,9 @@ with sync_playwright() as p:
     POP_BUTTONS = {'popGallery': '#galleryBtn', 'popActions': '#actionsBtn', 'popGuides': '#guidesBtn', 'popColor': '#colorBtn',
                    'popBrush': '[data-tool=pen]', 'popEraser': '[data-tool=eraser]', 'popFill': '[data-tool=fill]', 'popLayers': '#layersBtn'}
     def open_pop():
-        return page.evaluate('document.querySelector(":popover-open")?.id ?? null')
+        return page.evaluate('document.querySelector(".pop:popover-open")?.id ?? null')
     def close_pops():
-        page.evaluate('document.querySelectorAll(":popover-open").forEach(p => p.hidePopover())')
+        page.evaluate('document.querySelectorAll(".pop:popover-open").forEach(p => p.hidePopover())')
     def ui(sel):
         pop, tab = page.evaluate('s => { const el = document.querySelector(s); return [el.closest("[popover]")?.id ?? null, el.closest("[data-panel]")?.dataset.panel ?? null]; }', sel)
         if pop and open_pop() != pop:
@@ -745,8 +745,16 @@ with sync_playwright() as p:
           and active() == 'l1' and page.locator(row('l1', '.layer-actions')).count() == 1)
     close_pops()
     lay(row('l2'))
-    lay(row('l1', '.custom-control-input'), 'click', force=True)
+    lay(row('l1', '.layer-visible'))
     check('hiding a layer hides its strokes', layers()[0]['hidden'] and page.evaluate('[...document.querySelectorAll("#ink path")].map(p => p.style.display).join()') == 'none,')
+    ui('#layerList')
+    eye = page.locator(row('l1', '.layer-visible'))
+    eye_box = eye.bounding_box()
+    check('the eye toggle shows the state with aria-pressed and is a 36px target', eye.get_attribute('aria-pressed') == 'false' and eye.get_attribute('aria-label') == 'Show Layer 1'
+          and page.locator(row('l2', '.layer-visible')).get_attribute('aria-pressed') == 'true' and (eye_box['width'], eye_box['height']) == (36, 36), eye_box)
+    check('the panel head counts layers and the Layers button names the active one', page.locator('#layerCount').inner_text() == '2/10' and page.locator('#layersBtn').get_attribute('title') == 'Layers: Layer 2',
+          (page.locator('#layerCount').inner_text(), page.locator('#layersBtn').get_attribute('title')))
+    close_pops()
     check('the stroke counter counts what would be sent', page.locator('#stats').inner_text().strip() == '1/1000', page.locator('#stats').inner_text())
     check('the SDJ leaves the hidden layer out and passes the validator', validate() == {'ok': True, 'strokes': 1, 'palette': ['black']} and sdj()['strokes'][0]['points'][0][1] > 500, validate())
     page.keyboard.down('Alt'); page.mouse.click(*cv(100, 250)); page.keyboard.up('Alt')
@@ -785,6 +793,20 @@ with sync_playwright() as p:
     page.keyboard.press('Escape')
     pen([(100, 700), (300, 700)])
     check('drawing on a locked layer shows a toast', len(S()) == 2 and 'is locked' in status(), status())
+    lay(row('l2'))
+    act('[title=red]')
+    page.keyboard.press('f'); page.mouse.click(*cv(250, 250))
+    fill = S()[2:]
+    x0, y0, x1, y1 = bbox(fill) if fill else (0, 0, 720, 960)
+    check('fill stops at a locked outline and hatches the active layer', len(fill) > 0 and x0 >= 100 and y0 >= 100 and x1 <= 400 and y1 <= 400
+          and all(s['layer'] == 'l2' and s['color'] == 'red' for s in fill), (len(fill), x0, y0, x1, y1))
+    page.keyboard.press('Control+z')
+    page.keyboard.press('b')
+    page.keyboard.down('Alt'); page.mouse.click(*cv(100, 250)); page.keyboard.up('Alt')
+    check('the eyedropper reads a locked layer', status().startswith('picked black'), status())
+    lay(row('l1'))
+    page.keyboard.press('f'); page.mouse.click(*cv(250, 250))
+    check('fill onto a locked active layer shows a toast and draws nothing', len(S()) == 2 and 'is locked' in status() and page.locator('#status.error').count() == 1, status())
     lay(row('l1', '.layer-lock'))
     lay(row('l2'))
     lay(row('l2', '[title="Move down"]'))
@@ -808,8 +830,19 @@ with sync_playwright() as p:
     check('merge down joins the copy into the layer below', [l['name'] for l in layers()] == ['Layer 1', 'ink'] and [s['layer'] for s in S()] == ['l1', 'l2', 'l2'])
     page.keyboard.press('Control+z'); page.keyboard.press('Control+z')
     check('layer operations undo with the strokes', len(layers()) == 2 and len(S()) == 2)
+    lay(row('l2'))
+    page.keyboard.press('s'); mouse_path([(60, 60), (440, 60), (440, 440), (60, 440)])
+    check('the lasso picks the ellipse on another layer', halos() == 1 and S()[0]['layer'] == 'l1')
+    page.keyboard.press('Control+c')
+    page.keyboard.press('Control+d')
+    check('duplicate puts the copy on the layer of the original, just above it', [s['layer'] for s in S()] == ['l1', 'l1', 'l2'] and active() == 'l2', [s['layer'] for s in S()])
+    page.keyboard.press('Control+z')
+    page.keyboard.press('Control+v')
+    check('paste goes to the active layer', [s['layer'] for s in S()] == ['l1', 'l2', 'l2'], [s['layer'] for s in S()])
+    page.keyboard.press('Control+z')
+    page.keyboard.press('Escape'); page.keyboard.press('b')
 
-    lay(row('l1', '.custom-control-input'), 'click', force=True)
+    lay(row('l1', '.layer-visible'))
     act('#libName', 'fill', 'layered')
     act('#libSave')
     page.wait_for_timeout(200)
@@ -848,12 +881,38 @@ with sync_playwright() as p:
     act('#writeText')
     page.wait_for_timeout(300)
     check('text lands on a layer named after it', layers()[-1]['name'] == 'Hi' and active() == layers()[-1]['id'])
+    page.evaluate('''(svg) => window.dispatchEvent(new MessageEvent('message', { data: { type: 'doodler:import-svg', svg }, origin: 'https://web.slowly.app', source: window }))''', SVG)
+    page.wait_for_timeout(500)
+    bottom = layers()[0]['id']
+    check('a Remix onto a drawing puts its Background at the bottom and keeps the active layer',
+          [l['name'] for l in layers()] == ['Background', 'Layer 1', 'shapes', 'Hi'] and active() == layers()[-1]['id'] and any(s['layer'] == bottom for s in S()) and S()[0]['layer'] == bottom,
+          ([l['name'] for l in layers()], active()))
+    page.keyboard.press('Control+z')
+    check('undo removes the Remix layer', [l['name'] for l in layers()] == ['Layer 1', 'shapes', 'Hi'])
     for _ in range(7): act('#layerAdd')
     check('+ is disabled at 10 layers', len(layers()) == 10 and page.locator('#layerAdd').is_disabled())
     act('#layerAdd', 'click', force=True)
     check('the cap holds', len(layers()) == 10)
-    page.keyboard.press('Control+z')
-    lay(row('l1', '.custom-control-input'), 'click', force=True)
+    page.set_viewport_size({'width': 900, 'height': 700})
+    def toast_on_top(pop):
+        toast = page.locator('#toast').bounding_box()
+        rect = page.locator(f'#{pop}').bounding_box()
+        x0, x1 = max(toast['x'], rect['x']), min(toast['x'] + toast['width'], rect['x'] + rect['width'])
+        y0, y1 = max(toast['y'], rect['y']), min(toast['y'] + toast['height'], rect['y'] + rect['height'])
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        over = x0 < x1 and y0 < y1
+        top = page.evaluate('([x, y]) => { const t = document.getElementById("toast"); t.style.pointerEvents = "auto"; const hit = !!document.elementFromPoint(x, y)?.closest("#toast"); t.style.pointerEvents = ""; return hit; }', [cx, cy])
+        return over and top
+    ui('#libList')
+    page.locator('#libList .card').first.get_by_role('button', name='Add').click()
+    page.wait_for_timeout(100)
+    check('a toast shows above an open popover', 'no room for another layer' in status() and toast_on_top('popGallery'), status())
+    close_pops()
+    ui('#layerList')
+    page.wait_for_timeout(100)
+    check('a toast already on screen stays above a popover opened after it', toast_on_top('popLayers'))
+    close_pops()
+    lay(row('l1', '.layer-visible'))
     lay(row('l2', '.layer-lock'))
     lay(row(layers()[-2]['id']))
     for theme in ('light', 'dark'):
@@ -862,9 +921,35 @@ with sync_playwright() as p:
             page.set_viewport_size({'width': w, 'height': h})
             ui('#layerList')
             page.wait_for_timeout(150)
+            if (theme, w) == ('light', 900):
+                m = page.evaluate('''() => {
+                  const list = document.getElementById('layerList'), pop = document.getElementById('popLayers'), rows = [...list.querySelectorAll('.layer-row')];
+                  const inside = el => { const r = el.getBoundingClientRect(), b = list.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; };
+                  const i = rows.findIndex((r, k) => k > 0 && rows[k - 1].getAttribute('aria-selected') !== 'true' && r.getAttribute('aria-selected') !== 'true');
+                  const activeShown = inside(list.querySelector('[aria-selected=true]'));
+                  list.scrollTop = list.scrollHeight;
+                  return { scrolls: list.scrollHeight > list.clientHeight, popFits: pop.scrollHeight <= pop.clientHeight, activeShown, lastReachable: inside(rows[rows.length - 1]),
+                    pitch: rows[i].getBoundingClientRect().top - rows[i - 1].getBoundingClientRect().top, headShown: pop.getBoundingClientRect().top < list.getBoundingClientRect().top };
+                }''')
+                check('10 layers at 900x700 scroll inside the list, the bottom one is reachable and the panel head stays', m['scrolls'] and m['popFits'] and m['activeShown'] and m['lastReachable'] and m['headShown'] and 48 <= m['pitch'] <= 56, m)
+            if w == 1280: page.locator(row(active(), '.layer-delete')).hover()
             page.screenshot(path=str(OUT / f'14-layers-{theme}-{w}{SUFFIX}.png'))
             close_pops()
     act('#dark', 'uncheck', force=True)
+
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    item = {'id': 'many', 'name': 'many', 'savedAt': 2, 'layers': {'list': [{'id': 'l1', 'name': 'sketch', 'hidden': True, 'locked': False}, {'id': 'l2', 'name': 'ink', 'hidden': False, 'locked': False}], 'active': 'l2', 'of': [0] * 1000},
+            'sdj': {'version': 1, 'canvas': {'width': 720, 'height': 960}, 'palette': {'black': {'light': '#222222', 'dark': '#F5F5F5'}},
+                    'strokes': [{'color': 'black', 'weight': 3, 'startOffset': i * 100, 'points': [[10, 10, 0], [50, 50, 40]]} for i in range(1000)]}}
+    (OUT / 'many.json').write_text(json.dumps({'app': 'doodler', 'version': 1, 'items': [item]}))
+    ui('#libImport').set_input_files(str(OUT / 'many.json'))
+    page.wait_for_timeout(300)
+    page.locator('#libList .card', has_text='many').get_by_role('button', name='Open').click()
+    close_pops()
+    pen([(300, 300), (500, 400)])
+    page.keyboard.press('s'); mouse_path([(250, 250), (550, 250), (550, 450), (250, 450)])
+    page.keyboard.press('Control+d')
+    check('the paste limit counts the strokes that would be sent, not hidden ones', len(S()) == 1002 and 'cannot paste' not in status(), (len(S()), status()))
     b.close()
 
 print('errors', errors)

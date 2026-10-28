@@ -145,12 +145,19 @@ const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio]
 
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let toastTimer;
+/** The toast is a manual popover: only the top layer paints over the other popovers, and the latest to open is on top. */
+function raiseToast() {
+  const toast = $('toast');
+  toast.hidePopover();
+  toast.showPopover();
+}
 /** @param {string} text */
 function say(text, error = false) {
   const el = $('status');
   el.textContent = text;
   el.classList.toggle('error', error);
   $('toast').classList.add('shown');
+  raiseToast();
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $('toast').classList.remove('shown'), error ? TOAST_ERROR_MS : TOAST_MS);
 }
@@ -230,10 +237,16 @@ function renderInk(list = strokes) {
   selector.refresh();
 }
 
-/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eraser and the eyedropper may touch */
+/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eraser may touch */
 function editableAt(el) {
   const s = el ? strokeOf.get(el) : undefined;
   return s && L.editableIds(layers).has(String(s.layer)) ? s : undefined;
+}
+
+/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eyedropper may read, locked layers included */
+function shownAt(el) {
+  const s = el ? strokeOf.get(el) : undefined;
+  return s && L.shownIds(layers).has(String(s.layer)) ? s : undefined;
 }
 
 /** @param {Gesture} g @returns {S.Point[]} */
@@ -331,10 +344,12 @@ function cutAt(e) {
 
 /** @param {PointerEvent} e */
 function fillAt(e) {
+  const why = addBlocked();
+  if (why) return say(why, true);
   const shown = sent();
   const points = shown.reduce((a, s) => a + s.points.length, 0);
   const density = Number($('fillSpacing').value);
-  const result = F.hatchRegion(F.rasterInk(L.editable(strokes, layers)), toCanvas(e), {
+  const result = F.hatchRegion(F.rasterInk(L.visible(strokes, layers)), toCanvas(e), {
     style: $('fillStyle').value, angle: Number($('fillAngle').value) * Math.PI / 180, density, weight,
   }, { strokes: S.LIMITS.strokes - shown.length, points: S.LIMITS.points - points });
   if ('error' in result) return say(result.error, true);
@@ -375,7 +390,7 @@ function setPicking(on) {
 function pickAt(e) {
   setPicking(false);
   const hits = ERASER_PROBE.map(([dx, dy]) => document.elementFromPoint(e.clientX + dx, e.clientY + dy))
-    .map(editableAt).filter(s => !!s);
+    .map(shownAt).filter(s => !!s);
   const stroke = hits.sort((a, b) => strokes.indexOf(b) - strokes.indexOf(a))[0];
   if (!stroke) return say('no stroke under the pointer');
   if (!(stroke.color in S.BASE_COLORS) && stroke.color !== S.CANVAS_TOKEN && !customColors.includes(stroke.color)) customColors.push(stroke.color);
@@ -385,7 +400,7 @@ function pickAt(e) {
 }
 const selector = createSelector({
   board, typing: TYPING_TARGET, gapMs: STROKE_GAP_MS, say, pathEl, boardPoint, pxPerUnit,
-  strokes: () => strokes, palette: () => palette, commit: next => commit(next), addBlocked,
+  strokes: () => strokes, palette: () => palette, commit: next => commit(next), addBlocked, sent,
   pickable: s => L.editableIds(layers).has(String(s.layer)),
   amend: next => { setDoc(next); sessionStart = null; changed(); },
   setTool: t => { tool = t; buildBars(); },
@@ -459,7 +474,7 @@ board.addEventListener('wheel', e => {
 
 board.addEventListener('pointerdown', e => {
   if (e.button !== 0 && e.button !== 1) return;
-  const menu = document.querySelector(':popover-open');
+  const menu = document.querySelector('.pop:popover-open');
   if (menu instanceof HTMLElement) return menu.hidePopover();
   board.setPointerCapture(e.pointerId);
   if (e.pointerType === 'touch') {
@@ -735,16 +750,17 @@ function useSdj(sdj, { append, layers: packed } = {}) {
   return true;
 }
 
-/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} extraPalette @param {string | null} layerName null puts the strokes on the active layer */
-function applyImport(key, polylines, extraPalette, layerName) {
+/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} extraPalette @param {string | null} layerName null puts the strokes on the active layer @param {boolean} [bottom] the new layer goes under the others and the active layer stays */
+function applyImport(key, polylines, extraPalette, layerName, bottom = false) {
   const rerun = lastImport?.key === key;
   const before = lastImport && rerun ? lastImport.before : { strokes, layers, active };
   if (layerName !== null && before.layers.length >= L.MAX_LAYERS) return say(LAYER_CAP, true);
   const why = layerName === null && L.blocked(before.layers, before.active);
   if (why) return say(why, true);
-  const doc = layerName === null ? before : L.add(before.layers, before.active, layerName);
+  const doc = layerName === null ? before : bottom ? { ...L.add(before.layers, null, layerName), active: before.active } : L.add(before.layers, before.active, layerName);
   const start = before.strokes.length ? S.endTime(before.strokes) + STROKE_GAP_MS : 0;
-  const added = S.timed(polylines, start);
+  const into = bottom ? doc.layers[0].id : doc.active;
+  const added = S.timed(polylines, start).map(s => ({ ...s, layer: into }));
   palette = { ...palette, ...extraPalette };
   for (const t of Object.keys(extraPalette)) if (!customColors.includes(t)) customColors.push(t);
   if (rerun) {
@@ -772,6 +788,7 @@ let busyRun = 0;
 async function busy(label, work) {
   const run = ++busyRun;
   document.body.classList.add('busy');
+  raiseToast();
   progressBar.hidden = false;
   progressBar.removeAttribute('value');
   say(label + '...');
@@ -796,7 +813,7 @@ function runSvg(key = 'svg') {
       const { polylines, palette: extra, dropped } = await importSvg(source.text,
         { fills: $('svgFills').value, colors: $('svgColors').value, remix: source.remix, onProgress });
       if (!current()) return;
-      applyImport(key, polylines, extra, source.layer);
+      applyImport(key, polylines, extra, source.layer, source.remix);
       if (dropped) say(`${$('status').textContent}, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes`);
     } catch (err) { say('svg import failed: ' + errorText(err), true); }
   });
@@ -935,9 +952,11 @@ const LAYER_ICONS = {
   unlock: 'M7 11V8a5 5 0 0 1 9.6-1.9M5 11h14v9H5z',
   up: 'M12 19V5M6 11l6-6 6 6',
   down: 'M12 5v14M6 13l6 6 6-6',
-  rename: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
+  eye: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z',
+  eyeOff: 'M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.5 6.6A16.5 16.5 0 0 0 2 12s3.6 7 10 7a9.7 9.7 0 0 0 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2',
+  rename: 'M5 6V4h14v2M12 4v16M9 20h6',
   duplicate: 'M9 9h11v11H9zM5 15V4h11M14.5 12v5M12 14.5h5',
-  merge: 'M12 4v10M8 10l4 4 4-4M5 19h14',
+  merge: 'M12 2v6M9.5 5.5 12 8l2.5-2.5M12 11l9 4.5-9 4.5-9-4.5z',
   delete: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
 };
 
@@ -989,6 +1008,8 @@ function renameLayer(l, name) {
 function renderLayers(opening = false) {
   $('layerAdd').disabled = layers.length >= L.MAX_LAYERS;
   $('layerAdd').title = layers.length >= L.MAX_LAYERS ? `At most ${L.MAX_LAYERS} layers` : 'Add layer';
+  $('layerCount').textContent = `${layers.length}/${L.MAX_LAYERS}`;
+  $('layersBtn').title = `Layers: ${layers.find(l => l.id === active)?.name}`;
   if (!opening && !$('popLayers').matches(':popover-open')) return;
   $('layerList').replaceChildren(...layers.map((l, i) => {
     const row = document.createElement('div');
@@ -998,6 +1019,7 @@ function renderLayers(opening = false) {
     row.setAttribute('aria-selected', String(l.id === active));
     row.tabIndex = 0;
     row.classList.toggle('hidden-layer', l.hidden);
+    row.classList.toggle('locked-layer', l.locked);
     const pickRow = () => { if (active !== l.id) { active = l.id; renderLayers(); } };
     row.onclick = pickRow;
     row.onkeydown = e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pickRow(); } };
@@ -1010,14 +1032,12 @@ function renderLayers(opening = false) {
       () => layerOp({ layers: L.update(layers, l.id, { locked: !l.locked }), active }));
     lock.classList.add('layer-lock');
     lock.setAttribute('aria-pressed', String(l.locked));
-    const vis = document.createElement('div');
-    vis.className = 'custom-control custom-checkbox layer-visible';
-    const box = Object.assign(document.createElement('input'), { type: 'checkbox', className: 'custom-control-input', id: `layerShow-${l.id}`, checked: !l.hidden });
-    box.setAttribute('aria-label', `Show ${l.name}`);
-    box.onchange = () => layerOp({ layers: L.update(layers, l.id, { hidden: !box.checked }), active });
-    const label = Object.assign(document.createElement('label'), { className: 'custom-control-label', htmlFor: box.id, title: l.hidden ? 'Hidden, not sent' : 'Visible' });
-    vis.append(box, label);
-    vis.onclick = e => e.stopPropagation();
+    lock.setAttribute('aria-label', `Lock ${l.name}`);
+    const vis = layerButton(l.hidden ? 'eyeOff' : 'eye', l.hidden ? `Show ${l.name} (hidden, not sent)` : `Hide ${l.name}`,
+      () => layerOp({ layers: L.update(layers, l.id, { hidden: !l.hidden }), active }));
+    vis.classList.add('layer-visible');
+    vis.setAttribute('aria-pressed', String(!l.hidden));
+    vis.setAttribute('aria-label', `Show ${l.name}`);
     const main = document.createElement('div');
     main.className = 'layer-main';
     main.append(thumb, name, lock, vis);
@@ -1026,6 +1046,13 @@ function renderLayers(opening = false) {
       const actions = document.createElement('div');
       actions.className = 'layer-actions';
       const merged = L.mergeDown(strokes, layers, l.id);
+      const tip = span('layer-action-label', {}, '');
+      const showTip = (/** @type {Event} */ e) => { tip.textContent = e.target instanceof Element ? e.target.closest('button')?.title ?? '' : ''; };
+      const clearTip = () => { tip.textContent = ''; };
+      actions.addEventListener('pointerover', showTip);
+      actions.addEventListener('focusin', showTip);
+      actions.addEventListener('pointerleave', clearTip);
+      actions.addEventListener('focusout', clearTip);
       actions.append(
         layerButton('up', 'Move up', () => layerOp({ layers: L.move(layers, l.id, 1), active }), i < layers.length - 1),
         layerButton('down', 'Move down', () => layerOp({ layers: L.move(layers, l.id, -1), active }), i > 0),
@@ -1037,10 +1064,12 @@ function renderLayers(opening = false) {
           if (rest) layerOp(rest);
         }, layers.length > 1),
       );
-      row.append(actions);
+      actions.lastElementChild?.classList.add('layer-delete');
+      row.append(actions, tip);
     }
     return row;
   }).reverse());
+  $('layerList').querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest' });
 }
 
 $('layerAdd').onclick = () => {
@@ -1112,16 +1141,17 @@ function renderLibrary(items) {
       span('hint', {}, `${new Date(item.savedAt).toLocaleDateString()} · ${flat.strokes.length} strokes`));
     const actions = document.createElement('div');
     actions.className = 'actions';
-    const act = (label, fn) => {
+    const act = (label, fn, title = '') => {
       const b = document.createElement('button');
       b.className = 'btn btn-outline-light btn-sm';
       b.textContent = label;
+      b.title = title;
       b.onclick = libOp(label.toLowerCase(), fn);
       actions.append(b);
     };
     act('Open', () => { useSdj(item.sdj, { layers: item.layers }); openedId = item.id; renderLibrary(libItems); say(`opened "${item.name}"`); });
     act('Add', () => { if (useSdj(flat, { append: item.name })) say(`added "${item.name}"`); });
-    act('Download', () => lib.exportFile(`${fileName(item.name)}.doodler.json`, [{ id: item.id, name: item.name, savedAt: item.savedAt, sdj: flat }]));
+    act('Download', () => lib.exportFile(`${fileName(item.name)}.doodler.json`, [{ id: item.id, name: item.name, savedAt: item.savedAt, sdj: flat }]), 'Downloads the visible layers flattened into one drawing');
     act('Delete', async e => {
       if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = 'Sure?'; return; }
       renderLibrary(await lib.removeDrawing(item.id));
@@ -1326,7 +1356,8 @@ $('tabs').onclick = e => {
   for (const p of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.panel'))) p.hidden = p.dataset.panel !== tab;
 };
 $('popGallery').addEventListener('toggle', e => { if (/** @type {ToggleEvent} */ (e).newState === 'open') showLibrary(); });
-for (const pop of document.querySelectorAll('[popover]')) pop.addEventListener('toggle', e => {
+for (const pop of document.querySelectorAll('.pop')) pop.addEventListener('toggle', e => {
+  if (/** @type {ToggleEvent} */ (e).newState === 'open') raiseToast();
   document.querySelector(`[popovertarget=${pop.id}]`)?.classList.toggle('open', /** @type {ToggleEvent} */ (e).newState === 'open');
 });
 $('pick').onclick = () => setPicking(!picking);
