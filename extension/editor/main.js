@@ -130,7 +130,7 @@ const TOOLS = {
   line: () => span('tool-line'),
   ellipse: () => icon('circle-o', '◯'),
   eraser: () => icon('eraser', '⌫'),
-  fill: () => icon('droplet', '◐'),
+  fill: () => icon('droplet', '◍'),
 };
 /** @type {Record<string, string>} */
 const TOOL_OPTIONS = { pen: 'popBrush', line: 'popBrush', ellipse: 'popBrush', eraser: 'popEraser', fill: 'popFill' };
@@ -589,6 +589,7 @@ const toolButtons = Object.entries(TOOLS).map(([t, content]) => {
   const b = document.createElement('button');
   b.className = 'drawing-tool-circle';
   b.dataset.tool = t;
+  if (TOOL_OPTIONS[t]) b.dataset.opts = '';
   const key = Object.keys(TOOL_KEYS).find(k => TOOL_KEYS[k] === t)?.toUpperCase();
   b.title = `${t[0].toUpperCase()}${t.slice(1)} (${key})${TOOL_OPTIONS[t] ? ', tap again for options' : ''}`;
   b.append(content());
@@ -967,8 +968,14 @@ $('dark').onchange = () => {
   renderInk();
   renderLibrary(libItems);
 };
-$('symmetry').replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
-$('symmetry').onchange = () => { symmetry = $('symmetry').value; };
+const SYMMETRY_SELECTS = ['symmetry', 'symmetryBrush'];
+for (const id of SYMMETRY_SELECTS) {
+  $(id).replaceChildren(...Object.entries(SYMMETRY).map(([k, v]) => new Option(v.label, k)));
+  $(id).onchange = () => {
+    symmetry = $(id).value;
+    for (const other of SYMMETRY_SELECTS) $(other).value = symmetry;
+  };
+}
 $('eraserMode').onchange = buildBars;
 for (const [id, unit] of [['fillAngle', '°'], ['fillSpacing', '×']]) $(id).addEventListener('input', () => { $(`${id}Out`).textContent = $(id).value + unit; });
 $('rainbow').onchange = () => { rainbow = $('rainbow').checked; };

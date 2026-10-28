@@ -13,6 +13,11 @@ const DRAG_PX = 4, CLICK_PX = 6, LASSO_STEP_PX = 3;
 const PAD_PX = 6, HANDLE_PX = 10, ROTATE_PX = 26, HALO_PX = 6;
 const COALESCE_MS = 700;
 const NS = 'http://www.w3.org/2000/svg';
+const FLIP_X_ICON = 'M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4';
+const FLIP_Y_ICON = 'M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4';
+const DUPLICATE_ICON = 'M9 9h11v11H9zM5 15V4h11M14.5 12v5M12 14.5h5';
+const COPY_ICON = 'M9 9h11v11H9zM5 15V4h11';
+const DELETE_ICON = 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6';
 /** @type {Matrix} */
 export const IDENTITY = [1, 0, 0, 1, 0, 0];
 /** @type {Record<string, [number, number]>} */
@@ -219,10 +224,19 @@ export function createSelector(env) {
   env.board.append(layer);
 
   const bar = Object.assign(document.createElement('div'), { className: 'drawing-tool-group', hidden: true });
-  for (const [axis, glyph, title] of [['x', '↔', 'Flip horizontally'], ['y', '↕', 'Flip vertically']]) {
-    const b = Object.assign(document.createElement('button'), { className: 'drawing-tool-circle', title });
-    b.textContent = glyph;
-    b.onclick = () => flip(axis);
+  const actions = /** @type {[string, string, () => void][]} */ ([
+    ['Flip horizontally', FLIP_X_ICON, () => flip('x')],
+    ['Flip vertically', FLIP_Y_ICON, () => flip('y')],
+    ['Duplicate (Ctrl+D)', DUPLICATE_ICON, duplicate],
+    ['Copy (Ctrl+C)', COPY_ICON, () => document.execCommand('copy')],
+    ['Delete (Del)', DELETE_ICON, remove],
+  ]);
+  for (const [title, path, run] of actions) {
+    const b = Object.assign(document.createElement('button'), { className: 'drawing-tool-circle', title, onclick: run });
+    b.setAttribute('aria-label', title);
+    const icon = svg('svg', { class: 'svg-icon', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+    icon.append(svg('path', { d: path }));
+    b.append(icon);
     bar.append(b);
   }
   document.querySelector('.dock')?.append(bar);
@@ -345,6 +359,10 @@ export function createSelector(env) {
   /** @param {Clip} source */
   const paste = source => place(source.strokes, source.palette, pastes++);
 
+  function duplicate() {
+    if (sel.size) place(items(), {}, 1);
+  }
+
   function copyJson() {
     const picked = items();
     const sdj = S.buildSdj(picked, env.palette());
@@ -426,7 +444,7 @@ export function createSelector(env) {
       render();
     } else if (mod && !e.altKey && k === 'd' && sel.size) {
       e.preventDefault();
-      place(items(), {}, 1);
+      duplicate();
     } else if (!sel.size || mod || e.altKey) return;
     else if (k === 'escape') { if (!document.querySelector(':popover-open')) clear(); }
     else if (k === 'delete' || k === 'backspace') { e.preventDefault(); remove(); }

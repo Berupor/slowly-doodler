@@ -16,14 +16,11 @@
   </div>
   <div class="bar-group">
     <div class="bar-tools" id="tools" role="group" aria-label="Tools"></div>
-    <button class="drawing-icon-button bar-button" id="layersBtn" title="Layers (coming later)" disabled>
-      <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5"/></svg>
-    </button>
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
-    <button class="drawing-icon-button drawing-circle" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
+    <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
     <button class="drawing-icon-button drawing-circle drawing-done" id="send" title="Send to Slowly" hidden><i class="icon-done drawing-font-icon" data-glyph="✓"></i></button>
-    <button class="drawing-icon-button drawing-circle" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
+    <button class="drawing-icon-button bar-button" id="close" title="Close" hidden><i class="icon-close drawing-font-icon" data-glyph="✕"></i></button>
   </div>
 </header>
 
@@ -36,15 +33,17 @@
   </div>
 
   <div class="side drawing-pill" role="group" aria-label="Brush">
+    <svg class="rail-glyph" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3.5"/></svg>
     <div class="rail" id="weightRail" title="Brush size ([ and ])">
       <input type="range" id="weight" min="0.5" max="8" step="0.5" value="3" aria-label="Brush size">
       <div class="rail-preview drawing-pill"><span class="size-dot" id="weightDot"></span><output id="weightOut">3</output></div>
     </div>
-    <button class="side-button" id="pick" title="Eyedropper (I, or Alt+click)" aria-pressed="false"><span class="modify"></span></button>
+    <svg class="rail-glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6q2.5-5 5 0t5 0"/></svg>
     <div class="rail" id="smoothingRail" title="Smoothing">
       <input type="range" id="smoothing" min="0" max="100" step="1" value="20" aria-label="Smoothing">
       <div class="rail-preview drawing-pill">smoothing <output id="smoothingOut">20</output></div>
     </div>
+    <button class="side-button" id="pick" title="Eyedropper (I, or Alt+click)" aria-pressed="false"><span class="modify"></span></button>
     <button class="drawing-icon-button side-button" id="undo" title="Undo (Ctrl+Z)"><i class="icon-undo drawing-font-icon" data-glyph="↶"></i></button>
     <button class="drawing-icon-button side-button" id="redo" title="Redo (Ctrl+Shift+Z)"><i class="icon-undo drawing-font-icon flip" data-glyph="↶"></i></button>
   </div>
@@ -74,7 +73,7 @@
   </div>
   <div class="hint" id="libOpened" hidden></div>
   <div class="grid" id="libList"></div>
-  <div class="hint">Drawings live in this browser only and are deleted with the extension. Export a backup now and then.</div>
+  <div class="hint">Drawings live in this browser only; export a backup now and then.</div>
 </div>
 
 <div class="pop" id="popActions" popover aria-label="Actions">
@@ -111,31 +110,34 @@
           <option value="edges">edges (photos)</option><option value="sketch">sketch (clean lines)</option><option value="dark">dark lines (scans, pencil)</option>
         </select>
       </div>
-      <div class="field">
-        <label for="photoDetail">Detail</label>
-        <input type="range" class="custom-range" id="photoDetail" min="0" max="200" value="50">
-        <output id="photoDetailOut">50</output>
-      </div>
-      <div class="field">
-        <label for="photoMin">Min length</label>
-        <input type="range" class="custom-range" id="photoMin" min="2" max="40" value="8">
-        <output id="photoMinOut">8</output>
-      </div>
-      <div class="field">
-        <label for="photoZoom">Zoom</label>
-        <input type="range" class="custom-range" id="photoZoom" min="1" max="4" step="0.05" value="1">
-        <output id="photoZoomOut">1×</output>
-      </div>
-      <div class="field">
-        <label for="photoPanX">Move X</label>
-        <input type="range" class="custom-range" id="photoPanX" min="-1" max="1" step="0.05" value="0">
-        <output id="photoPanXOut">0</output>
-      </div>
-      <div class="field">
-        <label for="photoPanY">Move Y</label>
-        <input type="range" class="custom-range" id="photoPanY" min="-1" max="1" step="0.05" value="0">
-        <output id="photoPanYOut">0</output>
-      </div>
+      <details>
+        <summary>Adjust</summary>
+        <div class="field">
+          <label for="photoDetail">Detail</label>
+          <input type="range" class="custom-range" id="photoDetail" min="0" max="200" value="50">
+          <output id="photoDetailOut">50</output>
+        </div>
+        <div class="field">
+          <label for="photoMin">Min length</label>
+          <input type="range" class="custom-range" id="photoMin" min="2" max="40" value="8">
+          <output id="photoMinOut">8</output>
+        </div>
+        <div class="field">
+          <label for="photoZoom">Zoom</label>
+          <input type="range" class="custom-range" id="photoZoom" min="1" max="4" step="0.05" value="1">
+          <output id="photoZoomOut">1×</output>
+        </div>
+        <div class="field">
+          <label for="photoPanX">Move X</label>
+          <input type="range" class="custom-range" id="photoPanX" min="-1" max="1" step="0.05" value="0">
+          <output id="photoPanXOut">0</output>
+        </div>
+        <div class="field">
+          <label for="photoPanY">Move Y</label>
+          <input type="range" class="custom-range" id="photoPanY" min="-1" max="1" step="0.05" value="0">
+          <output id="photoPanYOut">0</output>
+        </div>
+      </details>
       <div class="custom-control custom-switch">
         <input type="checkbox" class="custom-control-input" id="photoColors">
         <label class="custom-control-label" for="photoColors">Photo colours</label>
@@ -166,7 +168,7 @@
         <output id="textSizeOut">56</output>
       </div>
     </section>
-    <div class="hint">Imports use the current colour and weight. Moving a slider redoes the last import in place.</div>
+    <div class="hint">Imports use the current colour and weight; moving a slider redoes the last one.</div>
   </div>
 
   <div class="panel" data-panel="canvas" role="tabpanel" hidden>
@@ -192,7 +194,7 @@
         <button class="btn btn-outline-light btn-sm" id="refFlip">Flip</button>
         <button class="btn btn-outline-light btn-sm" id="refReset">Reset</button>
       </div>
-      <div class="hint">Shown under the canvas for tracing, never exported. While Move is on, dragging the canvas moves the image instead of drawing.</div>
+      <div class="hint">Shown under the canvas for tracing and never exported; with Move on, dragging moves the image.</div>
     </section>
     <section>
       <div class="field"><h3>Clear canvas</h3><button class="btn btn-outline-light btn-sm" id="clear">Clear</button></div>
@@ -238,7 +240,7 @@
         <input type="checkbox" class="custom-control-input" id="compress" checked>
         <label class="custom-control-label" for="compress">Skip pauses longer than 0.6 s</label>
       </div>
-      <div class="hint">The recipient watches the drawing replay stroke by stroke. The play button in the top bar starts it here.</div>
+      <div class="hint">The recipient sees the drawing replayed stroke by stroke; the top bar play button previews it.</div>
     </section>
   </div>
 
@@ -303,15 +305,19 @@
     <label for="gridSpacing">Spacing</label>
     <select class="custom-select custom-select-sm" id="gridSpacing"></select>
   </div>
-  <div class="hint">Snap moves line and ellipse corners and the start of a pen stroke to the nearest grid crossing. The grid is never sent.</div>
+  <div class="hint">Snap pulls line and ellipse corners and pen starts to the nearest grid crossing; the grid is never sent.</div>
 </div>
 
 <div class="pop" id="popBrush" popover aria-label="Brush options">
+  <div class="field">
+    <label for="symmetryBrush">Symmetry</label>
+    <select class="custom-select custom-select-sm" id="symmetryBrush"></select>
+  </div>
   <div class="custom-control custom-switch">
     <input type="checkbox" class="custom-control-input" id="rainbow">
     <label class="custom-control-label" for="rainbow">Rainbow</label>
   </div>
-  <div class="hint">Rainbow cycles the 12 standard colours along pen, line and ellipse strokes. Smoothing is the lower slider on the left.</div>
+  <div class="hint">Rainbow cycles the 12 standard colours along pen, line and ellipse strokes.</div>
 </div>
 
 <div class="pop" id="popEraser" popover aria-label="Eraser options">
@@ -321,7 +327,7 @@
       <option value="whole">whole strokes</option><option value="cut">cut</option>
     </select>
   </div>
-  <div class="hint">Cut erases only what the eraser passes over and splits the strokes there; its size follows the brush weight.</div>
+  <div class="hint">Cut erases only what the eraser passes over; its size follows the brush weight.</div>
 </div>
 
 <div class="pop" id="popFill" popover aria-label="Fill options">
@@ -341,7 +347,7 @@
     <input type="range" class="custom-range" id="fillSpacing" min="1.2" max="6" step="0.2" value="2">
     <output id="fillSpacingOut">2×</output>
   </div>
-  <div class="hint">Fill hatches the closed shape you click, in the current colour and weight. Spacing is in stroke widths. Small gaps in the outline are ignored; a shape that is open to the page edge fills the whole open area.</div>
+  <div class="hint">Hatches the closed shape you click; spacing is in stroke widths and small outline gaps are ignored.</div>
 </div>
 
 <div class="pop" id="popColor" popover aria-label="Colour">
@@ -350,7 +356,7 @@
     <input type="color" id="customColor" value="#7e57c2" aria-label="Custom colour">
     <button class="btn btn-outline-light btn-sm" id="addColor">Add colour</button>
   </div>
-  <div class="hint">Colours after the first 12 and sizes other than 1, 3 and 6 pass the editor's checks but are not verified with the Slowly apps.</div>
+  <div class="hint">Extra colours and sizes other than 1, 3 and 6 are not verified with the Slowly apps.</div>
 </div>
 
 <script type="module" src="main.js"></script>
