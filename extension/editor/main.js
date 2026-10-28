@@ -589,6 +589,7 @@ function runPhoto() {
     applyImport(source.key, photoToPolylines(source.bitmap, {
       mode: $('photoMode').value, detail: Number($('photoDetail').value), minLength: Number($('photoMin').value),
       color, weight, photoColors: $('photoColors').checked,
+      zoom: Number($('photoZoom').value), panX: Number($('photoPanX').value), panY: Number($('photoPanY').value),
     }));
   });
 }
@@ -870,12 +871,17 @@ $('photoFile').onchange = async () => {
   if (!f) return;
   photoSource = { bitmap: await createImageBitmap(f), key: 'photo:' + Date.now() };
   $('photoFile').value = '';
+  for (const id of ['photoZoom', 'photoPanX', 'photoPanY']) {
+    $(id).value = $(id).defaultValue;
+    $(id + 'Out').textContent = $(id).value + (id === 'photoZoom' ? '×' : '');
+  }
   runPhoto();
 };
 const rerunPhoto = rerunIf('photo', runPhoto);
-for (const id of ['photoMode', 'photoDetail', 'photoMin', 'photoColors']) $(id).addEventListener('input', rerunPhoto);
-for (const [id, out] of [['photoDetail', 'photoDetailOut'], ['photoMin', 'photoMinOut'], ['textSize', 'textSizeOut']])
-  $(id).addEventListener('input', () => { $(out).textContent = $(id).value; });
+for (const id of ['photoMode', 'photoDetail', 'photoMin', 'photoZoom', 'photoPanX', 'photoPanY', 'photoColors']) $(id).addEventListener('input', rerunPhoto);
+for (const [id, out, unit] of [['photoDetail', 'photoDetailOut', ''], ['photoMin', 'photoMinOut', ''], ['textSize', 'textSizeOut', ''],
+  ['photoZoom', 'photoZoomOut', '×'], ['photoPanX', 'photoPanXOut', ''], ['photoPanY', 'photoPanYOut', '']])
+  $(id).addEventListener('input', () => { $(out).textContent = $(id).value + unit; });
 
 $('writeText').onclick = () => { textKey = null; lastImport = null; runText(); };
 const rerunText = rerunIf('text', runText);

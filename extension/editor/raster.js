@@ -486,12 +486,22 @@ function withinBudget(strokes, minLength, high) {
   return out;
 }
 
-export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, color, weight, photoColors = false }) {
-  const s = Math.min(1, (W - 2 * PAD) / image.width, (H - 2 * PAD) / image.height);
-  const w = Math.max(1, Math.round(image.width * s)), h = Math.max(1, Math.round(image.height * s));
+function visibleSpan(view, size, pan) {
+  const centred = (view - size) / 2;
+  const start = centred + pan * Math.max(Math.abs(centred), view / 2);
+  return { start, from: Math.max(0, start), to: Math.min(view, start + size) };
+}
+
+export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength = 8, color, weight, photoColors = false, zoom = 1, panX = 0, panY = 0 }) {
+  const scale = Math.min((W - 2 * PAD) / image.width, (H - 2 * PAD) / image.height) * zoom;
+  const xs = visibleSpan(W, image.width * scale, panX), ys = visibleSpan(H, image.height * scale, panY);
+  const sx = (xs.from - xs.start) / scale, sy = (ys.from - ys.start) / scale;
+  const sw = (xs.to - xs.from) / scale, sh = (ys.to - ys.from) / scale;
+  const s = Math.min(1, scale);
+  const w = Math.max(1, Math.round(sw * s)), h = Math.max(1, Math.round(sh * s));
   const ctx = canvas2d(w, h);
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(image, 0, 0, w, h);
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
   const g = grayscale(data, w, h);
   stretchLevels(g);
@@ -500,12 +510,12 @@ export function photoToPolylines(image, { mode = 'edges', detail = 50, minLength
   dropCornerPixels(lines.mask, w, h);
   const strokes = drawingOrder(withinBudget(linkStrokes(lines, w, h), minLength, lines.high)
     .map(st => ({ ...st, pts: simplifyPath(smoothPath(st.pts, st.closed), st.closed) })));
-  const k = Math.min((W - 2 * PAD) / w, (H - 2 * PAD) / h);
-  const ox = (W - w * k) / 2, oy = (H - h * k) / 2;
+  const kx = (xs.to - xs.from) / w, ky = (ys.to - ys.from) / h;
+  const ox = xs.from, oy = ys.from;
   return strokes.map(({ pts }) => ({
     color: photoColors ? nearestBase(inkColour(data, w, h, pts)) : color,
     weight,
-    pts: pts.map(([x, y]) => [x * k + ox, y * k + oy]),
+    pts: pts.map(([x, y]) => [x * kx + ox, y * ky + oy]),
   }));
 }
 

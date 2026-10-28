@@ -79,6 +79,24 @@ with sync_playwright() as p:
     print('photo colours', validate(), page.locator('#status').inner_text())
     page.screenshot(path=str(OUT / f'3-photo{SUFFIX}.png'))
 
+    def photo_extent():
+        pts = [p for s in json.loads(page.locator('#out').input_value())['sdj']['strokes'] for p in s['points']]
+        return [min(p[0] for p in pts), max(p[0] for p in pts), min(p[1] for p in pts), max(p[1] for p in pts)]
+    def set_range(id, value):
+        page.evaluate('([id, v]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event("input")); }', [id, value])
+    fit = photo_extent()
+    set_range('photoZoom', '3')
+    page.wait_for_timeout(1500)
+    print('photo zoom', validate(), photo_extent())
+    set_range('photoPanX', '1')
+    page.wait_for_timeout(1500)
+    print('photo zoom pan', validate(), photo_extent())
+    assert fit[3] - fit[2] < photo_extent()[3] - photo_extent()[2], 'zoom should enlarge the drawing'
+    page.screenshot(path=str(OUT / f'3-photo-zoom{SUFFIX}.png'))
+    set_range('photoZoom', '1')
+    set_range('photoPanX', '0')
+    page.wait_for_timeout(1500)
+
     page.locator('#clear').click()
     page.locator('#text').fill('Hello from far away, dear friend!')
     page.locator('#writeText').click()
