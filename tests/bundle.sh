@@ -13,9 +13,10 @@ echo 'const { importSvg } = (() => { const { W, H, CANVAS_TOKEN, BASE_COLORS, LI
 echo 'const { photoToPolylines, textToPolylines } = (() => { const { W, H, LIMITS, nearestBase, rdp } = S;'; sed '/^import /d;s/^export //' "$R/raster.js"; echo 'return { photoToPolylines, textToPolylines }; })();'
 echo 'const P = (() => { const { W, H, LIMITS, r2 } = S;'; sed '/^import /d;s/^export //' "$R/precision.js"; echo 'return { GRID_SPACINGS, loadSettings, saveSettings, snapAngle, squareCorner, constrainShape, snapToGrid, ropeRadius, minStepFor, follow, penMove, penEnd, renderGuides }; })();'
 echo 'const { createSelector } = (() => {'; sed '/^import /d;s/^export //' "$R/select.js"; echo 'return { createSelector }; })();'
+echo 'const L = (() => { const { endTime } = S;'; sed '/^import /d;s/^export //' "$R/layers.js"; echo 'return { MAX_LAYERS, NAME_MAX, BACKGROUND, initial, nextId, nextName, blocked, shownIds, editableIds, editable, visible, order, replaceEditable, flatten, add, update, move, remove, mergeDown, duplicate, pack, unpack }; })();'
 echo 'const lib = (() => {'; sed 's/^export //' "$R/library.js"; echo 'return { listDrawings, saveDrawing, updateDrawing, removeDrawing, importDrawings, exportFile, loadWorking, saveWorking }; })();'
 sed '/^import /d' "$R/main.js"
-echo 'window.__doodler = { get strokes() { return strokes; }, importSvg, photoToPolylines, S };'
+echo 'window.__doodler = { get strokes() { return strokes; }, get layers() { return layers; }, get active() { return active; }, importSvg, photoToPolylines, S };'
 echo '})();'
 } > "$O"
 sed 's#<script type="module" src="main.js"></script>#<script src="bundle.js"></script>#;s#href="style.css"#href="../../extension/editor/style.css"#' "$R/index.html" > "$T/index.html"

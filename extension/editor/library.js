@@ -1,4 +1,4 @@
-/** @typedef {{ id: string, name: string, savedAt: number, sdj: import('./sdj.js').Sdj }} LibItem */
+/** @typedef {{ id: string, name: string, savedAt: number, sdj: import('./sdj.js').Sdj, layers?: import('./layers.js').Packed }} LibItem */
 
 const LIBRARY_KEY = 'doodler:library';
 const WORKING_KEY = 'doodler:working';
@@ -38,9 +38,9 @@ const isItem = i => typeof i?.id === 'string' && i.id !== '' && typeof i.name ==
 
 export const listDrawings = () => get(LIBRARY_KEY, []);
 
-export const saveDrawing = (name, sdj) => exclusive(async () => {
+export const saveDrawing = (name, sdj, layers) => exclusive(async () => {
   const items = await listDrawings();
-  items.unshift({ id: crypto.randomUUID(), name, savedAt: Date.now(), sdj });
+  items.unshift({ id: crypto.randomUUID(), name, savedAt: Date.now(), sdj, ...(layers && { layers }) });
   await set(LIBRARY_KEY, items);
   return items;
 });
@@ -70,7 +70,7 @@ export const importDrawings = text => exclusive(async () => {
   const items = await listDrawings();
   const seen = new Set(items.map(i => i.id));
   const fresh = valid.filter(i => !seen.has(i.id) && seen.add(i.id))
-    .map(({ id, name, savedAt, sdj }) => ({ id, name, savedAt, sdj }));
+    .map(({ id, name, savedAt, sdj, layers }) => ({ id, name, savedAt, sdj, ...(layers && typeof layers === 'object' && { layers }) }));
   if (!fresh.length) return { items, added: 0, skipped: incoming.length };
   const merged = [...items, ...fresh].sort((a, b) => b.savedAt - a.savedAt);
   await set(LIBRARY_KEY, merged);

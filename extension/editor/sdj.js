@@ -3,7 +3,7 @@
 /** @typedef {[x: number, y: number, ms: number]} Point */
 /** @typedef {{ light: string, dark: string }} ColorEntry */
 /** @typedef {Record<string, ColorEntry>} Palette */
-/** @typedef {{ color: string, weight: number, startOffset: number, points: Point[] }} Stroke */
+/** @typedef {{ color: string, weight: number, startOffset: number, points: Point[], layer?: string }} Stroke layer is editor-only, buildSdj drops it */
 /** @typedef {{ version: number, canvas: { width: number, height: number }, palette: Palette, strokes: Stroke[] }} Sdj */
 /** @typedef {{ color: string, weight: number, pts: number[][] }} Polyline */
 
@@ -229,7 +229,7 @@ function cutOne(s, a, b, r) {
   if (!touched) return null;
   if (cur) pieces.push(cur);
   return pieces.filter(c => c.length > 1 && pathLength(c) >= MIN_PIECE).map(c => ({
-    color: s.color, weight: s.weight, startOffset: s.startOffset + c[0][2], points: c.map(([x, y, t]) => [x, y, t - c[0][2]]),
+    ...s, startOffset: s.startOffset + c[0][2], points: c.map(([x, y, t]) => [x, y, t - c[0][2]]),
   }));
 }
 

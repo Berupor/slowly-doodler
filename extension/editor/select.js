@@ -142,7 +142,9 @@ export function appendTimeline(existing, clip, gap) {
   if (!clip.length) return [];
   const first = Math.min(...clip.map(s => s.startOffset));
   const at = existing.length ? S.endTime(existing) + gap : 0;
-  return clip.map(s => ({ ...s, startOffset: Math.round(s.startOffset - first + at), points: s.points.map(([x, y, t]) => /** @type {S.Point} */ ([x, y, t])) }));
+  return clip.map(({ color, weight, startOffset, points }) => ({
+    color, weight, startOffset: Math.round(startOffset - first + at), points: points.map(([x, y, t]) => /** @type {S.Point} */ ([x, y, t])),
+  }));
 }
 
 /** @param {S.Stroke[]} existing @param {S.Stroke[]} added @param {S.Palette} palette */
@@ -202,6 +204,8 @@ function svg(tag, attrs = {}) {
  * @typedef {object} Env
  * @property {SVGSVGElement} board
  * @property {() => S.Stroke[]} strokes
+ * @property {(s: S.Stroke) => boolean} pickable strokes on hidden or locked layers are not
+ * @property {() => string | null} addBlocked why new strokes cannot be added now
  * @property {() => S.Palette} palette
  * @property {(next: S.Stroke[]) => void} commit
  * @property {(next: S.Stroke[]) => void} amend replaces the current state without a new undo step
@@ -258,6 +262,7 @@ export function createSelector(env) {
   /** @param {Event} e */
   const typing = e => e.target instanceof Element && !!e.target.closest(env.typing);
   const items = () => env.strokes().filter(s => sel.has(s));
+  const pickable = () => env.strokes().filter(env.pickable);
 
   function haloWidths() {
     for (const h of halos) h.el.setAttribute('stroke-width', String(S.STROKE_SCALE * h.weight + HALO_PX / env.pxPerUnit()));
@@ -284,7 +289,7 @@ export function createSelector(env) {
 
   function render() {
     const present = new Set(env.strokes());
-    for (const s of sel) if (!present.has(s)) sel.delete(s);
+    for (const s of sel) if (!present.has(s) || !env.pickable(s)) sel.delete(s);
     bar.hidden = !sel.size;
     ghosts.replaceChildren();
     lassoEl.removeAttribute('d');
@@ -338,6 +343,8 @@ export function createSelector(env) {
 
   /** @param {S.Stroke[]} source @param {S.Palette} extra @param {number} steps */
   function place(source, extra, steps) {
+    const why = env.addBlocked();
+    if (why) return env.say(why, true);
     const strokes = env.strokes();
     const appended = appendTimeline(strokes, source, env.gapMs);
     const src = /** @type {Box} */ (bounds(appended));
@@ -420,7 +427,7 @@ export function createSelector(env) {
 
   /** @param {Drag} d */
   function click(d) {
-    const hit = hitStroke(env.strokes(), [d.p.x, d.p.y], CLICK_PX / env.pxPerUnit());
+    const hit = hitStroke(pickable(), [d.p.x, d.p.y], CLICK_PX / env.pxPerUnit());
     if (!d.add) sel = new Set(hit ? [hit] : []);
     else if (hit) { if (sel.has(hit)) sel.delete(hit); else sel.add(hit); }
     render();
@@ -428,7 +435,7 @@ export function createSelector(env) {
 
   /** @param {Drag} d */
   function finishLasso(d) {
-    const picked = lassoPick(env.strokes(), /** @type {number[][]} */ (d.poly));
+    const picked = lassoPick(pickable(), /** @type {number[][]} */ (d.poly));
     sel = new Set(d.add ? [...sel, ...picked] : picked);
     render();
   }
@@ -438,8 +445,8 @@ export function createSelector(env) {
     const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
     if (mod && !e.altKey && k === 'a') {
       e.preventDefault();
-      if (!env.strokes().length) return;
-      sel = new Set(env.strokes());
+      if (!pickable().length) return;
+      sel = new Set(pickable());
       env.setTool('select');
       render();
     } else if (mod && !e.altKey && k === 'd' && sel.size) {

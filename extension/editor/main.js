@@ -5,6 +5,7 @@ import * as lib from './library.js';
 import * as P from './precision.js';
 import { createSelector } from './select.js';
 import * as F from './fill.js';
+import * as L from './layers.js';
 
 const { W, H } = S;
 const NS = 'http://www.w3.org/2000/svg';
@@ -62,7 +63,9 @@ Promise.race([loadSlowlyStyles(), new Promise(r => setTimeout(r, STYLE_WAIT_MS))
 $('dark').checked = isDark();
 
 /**
- * @typedef {{ strokes: S.Stroke[], palette: S.Palette }} Snapshot
+ * @typedef {{ layers: L.Layer[], active: string }} LayerState
+ * @typedef {LayerState & { strokes: S.Stroke[] }} Doc
+ * @typedef {Doc & { palette: S.Palette }} Snapshot
  * @typedef {{ tool: string, color: string, weight: number, startOffset: number, t0: number,
  *   a: [number, number], b: [number, number], dur: number, points: S.Point[], brush: [number, number], anchor: number | null }} Gesture
  */
@@ -71,6 +74,7 @@ $('dark').checked = isDark();
 let strokes = [];
 /** @type {S.Palette} */
 let palette = {};
+let { layers, active } = L.initial();
 /** @type {string[]} */
 let customColors = [];
 let tool = 'pen', color = 'black', weight = 3, rainbow = false;
@@ -102,7 +106,7 @@ const touches = new Map();
 let sessionStart = null;
 /** @type {number | null} */
 let replay = null;
-/** @type {{ key: string, before: S.Stroke[] } | null} */
+/** @type {{ key: string, before: Doc } | null} */
 let lastImport = null;
 
 const cx = W / 2, cy = H / 2;
@@ -151,12 +155,19 @@ function say(text, error = false) {
   toastTimer = setTimeout(() => $('toast').classList.remove('shown'), error ? TOAST_ERROR_MS : TOAST_MS);
 }
 
-/** @param {S.Stroke[]} next */
-function commit(next, { keepClock = false, keepImport = false } = {}) {
-  undoStack.push({ strokes, palette });
+/** @param {S.Stroke[]} next strokes without a layer go to the active one @param {LayerState} [doc] */
+function setDoc(next, doc) {
+  if (doc) ({ layers, active } = doc);
+  for (const s of next) s.layer ??= active;
+  strokes = L.order(next, layers);
+}
+
+/** @param {S.Stroke[]} next @param {{ keepClock?: boolean, keepImport?: boolean, doc?: LayerState }} [opts] */
+function commit(next, { keepClock = false, keepImport = false, doc } = {}) {
+  undoStack.push({ strokes, palette, layers, active });
   if (undoStack.length > HISTORY_DEPTH) undoStack.shift();
   redoStack = [];
-  strokes = next;
+  setDoc(next, doc);
   if (!keepClock) sessionStart = null;
   if (!keepImport) lastImport = null;
   changed();
@@ -166,12 +177,17 @@ function commit(next, { keepClock = false, keepImport = false } = {}) {
 function restore(from, to) {
   const snap = from.pop();
   if (!snap) return;
-  to.push({ strokes, palette });
-  ({ strokes, palette } = snap);
+  to.push({ strokes, palette, layers, active });
+  const picked = active;
+  ({ strokes, palette, layers, active } = snap);
+  if (layers.some(l => l.id === picked)) active = picked;
   sessionStart = null;
   lastImport = null;
   changed();
 }
+
+const sent = () => L.flatten(strokes, layers, STROKE_GAP_MS);
+const addBlocked = () => L.blocked(layers, active);
 
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let workingTimer;
@@ -180,8 +196,9 @@ function changed() {
   renderInk();
   updateStats();
   writeJson();
+  renderLayers();
   clearTimeout(workingTimer);
-  workingTimer = setTimeout(() => lib.saveWorking({ sdj: S.buildSdj(strokes, palette), customColors }).then(() => { autosaveFailed = false; }, err => {
+  workingTimer = setTimeout(() => lib.saveWorking({ ...stored(), customColors }).then(() => { autosaveFailed = false; }, err => {
     if (!autosaveFailed) say(`autosave failed, the drawing is not stored: ${err.message}`, true);
     autosaveFailed = true;
   }), 400);
@@ -200,13 +217,23 @@ function pathEl(points, token, w) {
   return el;
 }
 
+const stored = () => ({ sdj: S.buildSdj(strokes, palette), layers: L.pack(strokes, layers, active) });
+
 function renderInk(list = strokes) {
+  const shown = L.shownIds(layers);
   ink.replaceChildren(...list.map(s => {
     const el = pathEl(s.points, s.color, s.weight);
+    if (!shown.has(String(s.layer))) el.style.display = 'none';
     strokeOf.set(el, s);
     return el;
   }));
   selector.refresh();
+}
+
+/** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eraser and the eyedropper may touch */
+function editableAt(el) {
+  const s = el ? strokeOf.get(el) : undefined;
+  return s && L.editableIds(layers).has(String(s.layer)) ? s : undefined;
 }
 
 /** @param {Gesture} g @returns {S.Point[]} */
@@ -276,7 +303,7 @@ function toCanvas(e) {
 function eraseAt(e, erased) {
   for (const [dx, dy] of ERASER_PROBE) {
     const el = document.elementFromPoint(e.clientX + dx, e.clientY + dy);
-    const stroke = el && strokeOf.get(el);
+    const stroke = editableAt(el);
     if (stroke && el instanceof SVGElement && !erased.has(stroke)) {
       erased.add(stroke);
       el.style.display = 'none';
@@ -291,22 +318,25 @@ const cutRadius = () => Math.max(CUT_RADIUS_MIN, CUT_RADIUS_PER_WEIGHT * weight)
 function cutAt(e) {
   if (!cutting) return;
   const p = boardPoint(e);
-  const { strokes: next, blocked } = S.cutStrokes(cutting.strokes, cutting.last, [p.x, p.y], cutRadius());
+  const part = L.editable(cutting.strokes, layers);
+  const room = S.LIMITS.strokes - (L.visible(cutting.strokes, layers).length - part.length);
+  const { strokes: cut, blocked } = S.cutStrokes(part, cutting.last, [p.x, p.y], cutRadius(), room);
   cutting.last = [p.x, p.y];
   if (blocked && !cutting.blocked) say(`some strokes were not cut: splitting them would exceed ${S.LIMITS.strokes} strokes`, true);
   cutting.blocked ||= blocked;
-  if (next === cutting.strokes) return;
-  cutting.strokes = next;
-  renderInk(next);
+  if (cut === part) return;
+  cutting.strokes = L.replaceEditable(cutting.strokes, layers, cut);
+  renderInk(cutting.strokes);
 }
 
 /** @param {PointerEvent} e */
 function fillAt(e) {
-  const points = strokes.reduce((a, s) => a + s.points.length, 0);
+  const shown = sent();
+  const points = shown.reduce((a, s) => a + s.points.length, 0);
   const density = Number($('fillSpacing').value);
-  const result = F.hatchRegion(F.rasterInk(strokes), toCanvas(e), {
+  const result = F.hatchRegion(F.rasterInk(L.editable(strokes, layers)), toCanvas(e), {
     style: $('fillStyle').value, angle: Number($('fillAngle').value) * Math.PI / 180, density, weight,
-  }, { strokes: S.LIMITS.strokes - strokes.length, points: S.LIMITS.points - points });
+  }, { strokes: S.LIMITS.strokes - shown.length, points: S.LIMITS.points - points });
   if ('error' in result) return say(result.error, true);
   const start = strokes.length ? S.endTime(strokes) + STROKE_GAP_MS : 0;
   const added = S.timed(result.lines.map(pts => ({ color, weight, pts })), start);
@@ -345,7 +375,7 @@ function setPicking(on) {
 function pickAt(e) {
   setPicking(false);
   const hits = ERASER_PROBE.map(([dx, dy]) => document.elementFromPoint(e.clientX + dx, e.clientY + dy))
-    .map(el => el && strokeOf.get(el)).filter(s => !!s);
+    .map(editableAt).filter(s => !!s);
   const stroke = hits.sort((a, b) => strokes.indexOf(b) - strokes.indexOf(a))[0];
   if (!stroke) return say('no stroke under the pointer');
   if (!(stroke.color in S.BASE_COLORS) && stroke.color !== S.CANVAS_TOKEN && !customColors.includes(stroke.color)) customColors.push(stroke.color);
@@ -355,8 +385,9 @@ function pickAt(e) {
 }
 const selector = createSelector({
   board, typing: TYPING_TARGET, gapMs: STROKE_GAP_MS, say, pathEl, boardPoint, pxPerUnit,
-  strokes: () => strokes, palette: () => palette, commit: next => commit(next),
-  amend: next => { strokes = next; sessionStart = null; changed(); },
+  strokes: () => strokes, palette: () => palette, commit: next => commit(next), addBlocked,
+  pickable: s => L.editableIds(layers).has(String(s.layer)),
+  amend: next => { setDoc(next); sessionStart = null; changed(); },
   setTool: t => { tool = t; buildBars(); },
   addPalette: extra => {
     palette = { ...palette, ...extra };
@@ -455,6 +486,8 @@ board.addEventListener('pointerdown', e => {
     selector.down(e);
     return;
   }
+  const why = tool === 'eraser' ? null : addBlocked();
+  if (why) return say(why, true);
   if (tool === 'fill') {
     filling = true;
     return;
@@ -654,57 +687,80 @@ function setWeight(w) {
 }
 
 function updateStats() {
-  const points = strokes.reduce((a, s) => a + s.points.length, 0);
-  const colours = new Set(strokes.map(s => s.color)).size;
-  const parts = [[strokes.length, S.LIMITS.strokes, 'strokes'], [points, S.LIMITS.points, 'points'], [colours, S.LIMITS.palette, 'colours']]
+  const shown = sent();
+  const points = shown.reduce((a, s) => a + s.points.length, 0);
+  const colours = new Set(shown.map(s => s.color)).size;
+  const parts = [[shown.length, S.LIMITS.strokes, 'strokes'], [points, S.LIMITS.points, 'points'], [colours, S.LIMITS.palette, 'colours']]
     .map(([n, max, label]) => ({ over: n > max, text: `${n.toLocaleString()} / ${max.toLocaleString()} ${label}` }));
   const over = parts.find(p => p.over);
   const stats = $('stats');
-  stats.replaceChildren(icon('drawing', '✎'), over ? over.text : `${strokes.length}/${S.LIMITS.strokes}`);
-  stats.title = parts.map(p => p.text).join(' · ');
+  stats.replaceChildren(icon('drawing', '✎'), over ? over.text : `${shown.length}/${S.LIMITS.strokes}`);
+  const skipped = strokes.length - shown.length;
+  stats.title = [...parts.map(p => p.text), ...(skipped ? [`${skipped} on hidden layers, not sent`] : [])].join(' · ');
   stats.classList.toggle('drawing-count-limit', !!over);
-  $('badge').hidden = strokes.every(S.isStandard);
+  $('badge').hidden = shown.every(S.isStandard);
   $('undo').disabled = !undoStack.length;
   $('redo').disabled = !redoStack.length;
 }
 
 function payload() {
-  return { target_user: Number($('target').value), sdj: S.buildSdj(strokes, palette), render: $('render').checked };
+  return { target_user: Number($('target').value), sdj: S.buildSdj(sent(), palette), render: $('render').checked };
 }
 
 function writeJson() { $('out').value = JSON.stringify(payload()); }
 
-function useSdj(sdj, { append = false } = {}) {
+const LAYER_CAP = `no room for another layer, ${L.MAX_LAYERS} is the most`;
+
+/** @param {any} sdj @param {{ append?: string, layers?: unknown }} [opts] append: name of the new layer the strokes go to */
+function useSdj(sdj, { append, layers: packed } = {}) {
+  if (append !== undefined && layers.length >= L.MAX_LAYERS) {
+    say(LAYER_CAP, true);
+    return false;
+  }
   const custom = Object.fromEntries(Object.entries(sdj.palette || {}).filter(([k, v]) => {
     const base = S.baseEntry(k);
     return !base || base.light.toLowerCase() !== v.light.toLowerCase() || base.dark.toLowerCase() !== v.dark.toLowerCase();
   }));
   palette = { ...palette, ...custom };
   for (const t of Object.keys(custom)) if (!customColors.includes(t) && t !== S.CANVAS_TOKEN) customColors.push(t);
-  const shift = append && strokes.length ? S.endTime(strokes) + STROKE_GAP_MS : 0;
+  const shift = append !== undefined && strokes.length ? S.endTime(strokes) + STROKE_GAP_MS : 0;
+  /** @type {S.Stroke[]} */
   const incoming = sdj.strokes.map(s => ({ ...s, startOffset: (s.startOffset || 0) + shift, points: s.points.map(p => [p[0], p[1], p[2] || 0]) }));
-  commit(append ? [...strokes, ...incoming] : incoming);
+  if (append !== undefined) commit([...strokes, ...incoming], { doc: L.add(layers, active, append) });
+  else {
+    const doc = L.unpack(incoming, packed);
+    commit(doc.strokes, { doc });
+  }
   buildBars();
+  return true;
 }
 
-/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} [extraPalette] */
-function applyImport(key, polylines, extraPalette = {}) {
-  const base = lastImport && lastImport.key === key ? lastImport.before : strokes;
-  const start = base.length ? S.endTime(base) + STROKE_GAP_MS : 0;
+/** @param {string} key @param {S.Polyline[]} polylines @param {S.Palette} extraPalette @param {string | null} layerName null puts the strokes on the active layer */
+function applyImport(key, polylines, extraPalette, layerName) {
+  const rerun = lastImport?.key === key;
+  const before = lastImport && rerun ? lastImport.before : { strokes, layers, active };
+  if (layerName !== null && before.layers.length >= L.MAX_LAYERS) return say(LAYER_CAP, true);
+  const why = layerName === null && L.blocked(before.layers, before.active);
+  if (why) return say(why, true);
+  const doc = layerName === null ? before : L.add(before.layers, before.active, layerName);
+  const start = before.strokes.length ? S.endTime(before.strokes) + STROKE_GAP_MS : 0;
   const added = S.timed(polylines, start);
   palette = { ...palette, ...extraPalette };
   for (const t of Object.keys(extraPalette)) if (!customColors.includes(t)) customColors.push(t);
-  if (lastImport?.key === key) {
-    strokes = [...base, ...added];
+  if (rerun) {
+    setDoc([...before.strokes, ...added], doc);
     changed();
   } else {
-    commit([...base, ...added], { keepImport: true });
-    lastImport = { key, before: base };
+    commit([...before.strokes, ...added], { keepImport: true, doc });
+    lastImport = { key, before };
   }
   buildBars();
-  const err = S.validate(S.buildSdj(strokes, palette));
+  const err = S.validate(S.buildSdj(sent(), palette));
   say(err && err !== 'nothing drawn' ? `imported ${added.length} strokes, but ${err}` : `imported ${added.length} strokes`, !!err && err !== 'nothing drawn');
 }
+
+/** @param {string} file */
+const baseName = file => file.replace(/\.[^.]+$/, '') || file;
 
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r)));
 
@@ -730,7 +786,7 @@ async function busy(label, work) {
   }
 }
 
-/** @type {{ text: string, remix: boolean } | null} */
+/** @type {{ text: string, remix: boolean, layer: string | null } | null} */
 let svgSource = null;
 function runSvg(key = 'svg') {
   if (!svgSource) return;
@@ -740,7 +796,7 @@ function runSvg(key = 'svg') {
       const { polylines, palette: extra, dropped } = await importSvg(source.text,
         { fills: $('svgFills').value, colors: $('svgColors').value, remix: source.remix, onProgress });
       if (!current()) return;
-      applyImport(key, polylines, extra);
+      applyImport(key, polylines, extra, source.layer);
       if (dropped) say(`${$('status').textContent}, ${dropped} smallest pieces dropped to stay within ${S.LIMITS.strokes} strokes`);
     } catch (err) { say('svg import failed: ' + errorText(err), true); }
   });
@@ -749,7 +805,7 @@ function runSvg(key = 'svg') {
 /** @param {unknown} err */
 const errorText = err => err instanceof Error ? err.message : String(err);
 
-/** @type {{ bitmap: ImageBitmap, key: string } | null} */
+/** @type {{ bitmap: ImageBitmap, key: string, name: string } | null} */
 let photoSource = null;
 function runPhoto() {
   if (!photoSource) return;
@@ -759,7 +815,7 @@ function runPhoto() {
       mode: $('photoMode').value, detail: Number($('photoDetail').value), minLength: Number($('photoMin').value),
       color, weight, photoColors: $('photoColors').checked,
       zoom: Number($('photoZoom').value), panX: Number($('photoPanX').value), panY: Number($('photoPanY').value),
-    }));
+    }), {}, source.name);
   });
 }
 
@@ -772,7 +828,7 @@ function runText() {
   return busy('writing', async () => {
     applyImport(key, textToPolylines(text, {
       font: $('font').value, size: Number($('textSize').value), align: $('textAlign').value, color, weight,
-    }));
+    }), {}, text);
   });
 }
 
@@ -822,17 +878,18 @@ function compressedStarts(list) {
 }
 
 function startReplay() {
-  if (!strokes.length) return;
+  const list = sent();
+  if (!list.length) return;
   selector.clear();
-  const starts = compressedStarts(strokes);
-  const els = strokes.map(s => pathEl([], s.color, s.weight));
-  const shown = new Array(strokes.length).fill(0);
+  const starts = compressedStarts(list);
+  const els = list.map(s => pathEl([], s.color, s.weight));
+  const shown = new Array(list.length).fill(0);
   ink.replaceChildren(...els);
   const t0 = performance.now(), speed = Number($('replaySpeed').value);
   const frame = () => {
     const t = (performance.now() - t0) * speed;
     let done = true;
-    strokes.forEach((s, i) => {
+    list.forEach((s, i) => {
       const local = t - starts[i];
       let n = 0;
       if (local >= 0) while (n < s.points.length && s.points[n][2] <= local) n++;
@@ -873,6 +930,124 @@ function thumbnail(sdj) {
   return svg;
 }
 
+const LAYER_ICONS = {
+  lock: 'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v9H5z',
+  unlock: 'M7 11V8a5 5 0 0 1 9.6-1.9M5 11h14v9H5z',
+  up: 'M12 19V5M6 11l6-6 6 6',
+  down: 'M12 5v14M6 13l6 6 6-6',
+  rename: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
+  duplicate: 'M9 9h11v11H9zM5 15V4h11M14.5 12v5M12 14.5h5',
+  merge: 'M12 4v10M8 10l4 4 4-4M5 19h14',
+  delete: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
+};
+
+/** @param {keyof typeof LAYER_ICONS} name @param {string} title @param {() => void} run @param {boolean} [enabled] */
+function layerButton(name, title, run, enabled = true) {
+  const b = Object.assign(document.createElement('button'), { className: 'drawing-icon-button layer-icon', title, disabled: !enabled });
+  b.setAttribute('aria-label', title);
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'svg-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', LAYER_ICONS[name]);
+  svg.append(path);
+  b.append(svg);
+  b.onclick = e => { e.stopPropagation(); run(); };
+  return b;
+}
+
+/** @param {LayerState & { strokes?: S.Stroke[] }} next */
+function layerOp(next) {
+  commit(next.strokes ?? strokes, { keepClock: true, doc: next });
+}
+
+/** @param {L.Layer} l @param {HTMLElement} name */
+function renameLayer(l, name) {
+  const input = Object.assign(document.createElement('input'), { className: 'form-control form-control-sm layer-rename', value: l.name, maxLength: L.NAME_MAX });
+  input.setAttribute('aria-label', 'Layer name');
+  let done = false;
+  const finish = (/** @type {boolean} */ save) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (save && value && value !== l.name) layerOp({ layers: L.update(layers, l.id, { name: value }), active });
+    else renderLayers();
+  };
+  input.onkeydown = e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+  input.onclick = e => e.stopPropagation();
+  name.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function renderLayers(opening = false) {
+  $('layerAdd').disabled = layers.length >= L.MAX_LAYERS;
+  $('layerAdd').title = layers.length >= L.MAX_LAYERS ? `At most ${L.MAX_LAYERS} layers` : 'Add layer';
+  if (!opening && !$('popLayers').matches(':popover-open')) return;
+  $('layerList').replaceChildren(...layers.map((l, i) => {
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+    row.dataset.layer = l.id;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(l.id === active));
+    row.tabIndex = 0;
+    row.classList.toggle('hidden-layer', l.hidden);
+    const pickRow = () => { if (active !== l.id) { active = l.id; renderLayers(); } };
+    row.onclick = pickRow;
+    row.onkeydown = e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pickRow(); } };
+    const thumb = thumbnail(S.buildSdj(strokes.filter(s => s.layer === l.id), palette));
+    thumb.setAttribute('class', 'layer-thumb');
+    const name = span('layer-name', {}, l.name);
+    name.title = 'Double-click to rename';
+    name.ondblclick = () => renameLayer(l, name);
+    const lock = layerButton(l.locked ? 'lock' : 'unlock', l.locked ? `Unlock ${l.name}` : `Lock ${l.name}`,
+      () => layerOp({ layers: L.update(layers, l.id, { locked: !l.locked }), active }));
+    lock.classList.add('layer-lock');
+    lock.setAttribute('aria-pressed', String(l.locked));
+    const vis = document.createElement('div');
+    vis.className = 'custom-control custom-checkbox layer-visible';
+    const box = Object.assign(document.createElement('input'), { type: 'checkbox', className: 'custom-control-input', id: `layerShow-${l.id}`, checked: !l.hidden });
+    box.setAttribute('aria-label', `Show ${l.name}`);
+    box.onchange = () => layerOp({ layers: L.update(layers, l.id, { hidden: !box.checked }), active });
+    const label = Object.assign(document.createElement('label'), { className: 'custom-control-label', htmlFor: box.id, title: l.hidden ? 'Hidden, not sent' : 'Visible' });
+    vis.append(box, label);
+    vis.onclick = e => e.stopPropagation();
+    const main = document.createElement('div');
+    main.className = 'layer-main';
+    main.append(thumb, name, lock, vis);
+    row.append(main);
+    if (l.id === active) {
+      const actions = document.createElement('div');
+      actions.className = 'layer-actions';
+      const merged = L.mergeDown(strokes, layers, l.id);
+      actions.append(
+        layerButton('up', 'Move up', () => layerOp({ layers: L.move(layers, l.id, 1), active }), i < layers.length - 1),
+        layerButton('down', 'Move down', () => layerOp({ layers: L.move(layers, l.id, -1), active }), i > 0),
+        layerButton('rename', 'Rename', () => renameLayer(l, name)),
+        layerButton('duplicate', 'Duplicate', () => layerOp(L.duplicate(strokes, layers, l.id)), layers.length < L.MAX_LAYERS),
+        layerButton('merge', 'Merge down', () => merged && layerOp(merged), !!merged),
+        layerButton('delete', 'Delete layer', () => {
+          const rest = L.remove(strokes, layers, l.id);
+          if (rest) layerOp(rest);
+        }, layers.length > 1),
+      );
+      row.append(actions);
+    }
+    return row;
+  }).reverse());
+}
+
+$('layerAdd').onclick = () => {
+  if (layers.length < L.MAX_LAYERS) layerOp(L.add(layers, active, L.nextName(layers)));
+};
+$('popLayers').addEventListener('beforetoggle', e => { if (/** @type {ToggleEvent} */ (e).newState === 'open') renderLayers(true); });
+
 /**
  * @param {string} label
  * @param {(...args: any[]) => unknown} fn
@@ -906,6 +1081,8 @@ function renderLibrary(items) {
     return;
   }
   $('libList').replaceChildren(...items.map(item => {
+    const doc = L.unpack(item.sdj.strokes, item.layers);
+    const flat = S.buildSdj(L.flatten(doc.strokes, doc.layers, STROKE_GAP_MS), item.sdj.palette);
     const card = document.createElement('div');
     card.className = item.id === openedId ? 'card shadow-sm current' : 'card shadow-sm';
     const meta = document.createElement('div');
@@ -932,7 +1109,7 @@ function renderLibrary(items) {
     title.onclick = editName;
     title.onkeydown = e => { if (e.key === 'Enter') editName(); };
     meta.append(title,
-      span('hint', {}, `${new Date(item.savedAt).toLocaleDateString()} · ${item.sdj.strokes.length} strokes`));
+      span('hint', {}, `${new Date(item.savedAt).toLocaleDateString()} · ${flat.strokes.length} strokes`));
     const actions = document.createElement('div');
     actions.className = 'actions';
     const act = (label, fn) => {
@@ -942,14 +1119,14 @@ function renderLibrary(items) {
       b.onclick = libOp(label.toLowerCase(), fn);
       actions.append(b);
     };
-    act('Open', () => { useSdj(item.sdj); openedId = item.id; renderLibrary(libItems); say(`opened "${item.name}"`); });
-    act('Add', () => { useSdj(item.sdj, { append: true }); say(`added "${item.name}"`); });
-    act('Download', () => lib.exportFile(`${fileName(item.name)}.doodler.json`, [item]));
+    act('Open', () => { useSdj(item.sdj, { layers: item.layers }); openedId = item.id; renderLibrary(libItems); say(`opened "${item.name}"`); });
+    act('Add', () => { if (useSdj(flat, { append: item.name })) say(`added "${item.name}"`); });
+    act('Download', () => lib.exportFile(`${fileName(item.name)}.doodler.json`, [{ id: item.id, name: item.name, savedAt: item.savedAt, sdj: flat }]));
     act('Delete', async e => {
       if (e.currentTarget.dataset.armed !== '1') { e.currentTarget.dataset.armed = '1'; e.currentTarget.textContent = 'Sure?'; return; }
       renderLibrary(await lib.removeDrawing(item.id));
     });
-    card.append(thumbnail(item.sdj), meta, actions);
+    card.append(thumbnail(flat), meta, actions);
     return card;
   }));
 }
@@ -957,7 +1134,7 @@ function renderLibrary(items) {
 $('undo').onclick = () => restore(undoStack, redoStack);
 $('redo').onclick = () => restore(redoStack, undoStack);
 $('clear').onclick = () => {
-  if (strokes.length) commit([]);
+  if (strokes.length || layers.length > 1) commit([], { doc: L.initial() });
   openedId = null;
   renderLibrary(libItems);
 };
@@ -966,6 +1143,7 @@ $('dark').onchange = () => {
   document.documentElement.classList.toggle('theme-dark', $('dark').checked);
   buildBars();
   renderInk();
+  renderLayers();
   renderLibrary(libItems);
 };
 const SYMMETRY_SELECTS = ['symmetry', 'symmetryBrush'];
@@ -1052,7 +1230,7 @@ $('refReset').onclick = resetRef;
 $('svgFile').onchange = async () => {
   const f = $('svgFile').files?.[0];
   if (!f) return;
-  svgSource = { text: await f.text(), remix: false };
+  svgSource = { text: await f.text(), remix: false, layer: baseName(f.name) };
   lastImport = null;
   runSvg('svg:' + Date.now());
   $('svgFile').value = '';
@@ -1064,7 +1242,7 @@ $('svgColors').onchange = rerunSvg;
 $('photoFile').onchange = async () => {
   const f = $('photoFile').files?.[0];
   if (!f) return;
-  photoSource = { bitmap: await createImageBitmap(f), key: 'photo:' + Date.now() };
+  photoSource = { bitmap: await createImageBitmap(f), key: 'photo:' + Date.now(), name: baseName(f.name) };
   $('photoFile').value = '';
   for (const id of ['photoZoom', 'photoPanX', 'photoPanY']) {
     $(id).value = $(id).defaultValue;
@@ -1085,7 +1263,8 @@ for (const id of ['font', 'textSize', 'textAlign']) $(id).addEventListener('inpu
 $('libSave').onclick = libOp('save', async () => {
   if (!strokes.length) return say('nothing to save', true);
   const name = $('libName').value.trim() || new Date().toLocaleString();
-  const items = await lib.saveDrawing(name, S.buildSdj(strokes, palette));
+  const { sdj, layers: packed } = stored();
+  const items = await lib.saveDrawing(name, sdj, packed);
   openedId = items[0].id;
   renderLibrary(items);
   $('libName').value = '';
@@ -1095,7 +1274,7 @@ $('libUpdate').onclick = libOp('update', async () => {
   if (!strokes.length) return say('nothing to save', true);
   const name = $('libName').value.trim();
   const id = String(openedId);
-  const items = await lib.updateDrawing(id, { sdj: S.buildSdj(strokes, palette), savedAt: Date.now(), ...(name && { name }) });
+  const items = await lib.updateDrawing(id, { ...stored(), savedAt: Date.now(), ...(name && { name }) });
   renderLibrary(items);
   $('libName').value = '';
   say(`updated "${items.find(i => i.id === id)?.name}"`);
@@ -1188,17 +1367,21 @@ $('close').onclick = () => window.parent.postMessage({ type: 'doodler:close' }, 
 const send = $('send');
 send.hidden = !embedded;
 send.onclick = () => {
-  const sdj = S.buildSdj(S.simplifyStrokes(strokes), palette);
+  const flat = sent();
+  const sdj = S.buildSdj(S.simplifyStrokes(flat), palette);
   const err = S.validate(sdj);
   if (err) return say(err, true);
+  const skipped = strokes.length - flat.length;
+  if (skipped) say(`${skipped} strokes on hidden layers were left out`);
   window.parent.postMessage({ type: 'doodler:sdj', sdj }, SLOWLY_ORIGIN);
 };
 
 window.addEventListener('message', e => {
   if (e.source !== window.parent || e.origin !== SLOWLY_ORIGIN) return;
   if (e.data?.type === 'doodler:import-svg') {
-    if (e.data.replace) commit([]);
-    svgSource = { text: e.data.svg, remix: true };
+    const fresh = e.data.replace || !strokes.length;
+    if (fresh) commit([], { doc: L.initial(L.BACKGROUND) });
+    svgSource = { text: e.data.svg, remix: true, layer: fresh ? null : L.BACKGROUND };
     lastImport = null;
     runSvg('svg:remix:' + Date.now())?.then(() => say(e.data.replace
       ? 'attached drawing loaded, sending replaces it' : 'drawing loaded, draw on top of it'));
@@ -1208,7 +1391,7 @@ window.addEventListener('message', e => {
 const working = await lib.loadWorking();
 if (working?.sdj?.strokes?.length) {
   customColors = working.customColors || [];
-  useSdj(working.sdj);
+  useSdj(working.sdj, { layers: working.layers });
   undoStack = [];
 }
 buildBars();

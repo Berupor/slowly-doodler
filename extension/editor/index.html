@@ -16,6 +16,9 @@
   </div>
   <div class="bar-group">
     <div class="bar-tools" id="tools" role="group" aria-label="Tools"></div>
+    <button class="drawing-icon-button bar-button" id="layersBtn" popovertarget="popLayers" title="Layers">
+      <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 9l9 5 9-5zM3 14l9 5 9-5"/></svg>
+    </button>
     <button class="drawing-icon-button bar-button" id="colorBtn" popovertarget="popColor" title="Colour"><span class="color-dot" id="colorDot"></span></button>
     <span class="bar-sep"></span>
     <button class="drawing-icon-button bar-button" id="replay" title="Replay the drawing"><i class="icon-play_arrow drawing-font-icon" data-glyph="▶"></i></button>
@@ -348,6 +351,17 @@
     <output id="fillSpacingOut">2×</output>
   </div>
   <div class="hint">Hatches the closed shape you click; spacing is in stroke widths and small outline gaps are ignored.</div>
+</div>
+
+<div class="pop" id="popLayers" popover aria-label="Layers">
+  <div class="pop-head">
+    <h3>Layers</h3>
+    <button class="drawing-icon-button layer-add" id="layerAdd" title="Add layer" aria-label="Add layer">
+      <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+  <div class="layer-list" id="layerList" role="listbox" aria-label="Layers, top first"></div>
+  <div class="hint">Layers stay in the editor: Send flattens the visible ones into one drawing.</div>
 </div>
 
 <div class="pop" id="popColor" popover aria-label="Colour">
