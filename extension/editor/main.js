@@ -253,13 +253,31 @@ const elementOf = new WeakMap();
 function renderInk(list = pending ? [...strokes, ...pending.made] : strokes) {
   const shown = L.shownIds(layers);
   ink.replaceChildren(...list.map(s => {
-    const el = pathEl(s.points, s.color, s.weight);
+    const el = inkEl(s);
     if (s.layer !== undefined && !shown.has(s.layer)) el.style.display = 'none';
-    strokeOf.set(el, s);
-    elementOf.set(s, el);
     return el;
   }));
   selector.refresh();
+}
+
+/** @param {S.Stroke} s */
+function inkEl(s) {
+  const el = pathEl(s.points, s.color, s.weight);
+  strokeOf.set(el, s);
+  elementOf.set(s, el);
+  return el;
+}
+
+/** @param {S.Stroke[]} before @param {S.Stroke[]} after the same strokes, some replaced in place by pieces */
+function patchInk(before, after) {
+  const old = new Set(before);
+  let j = 0;
+  for (const s of before) {
+    if (after[j] === s) { j++; continue; }
+    const pieces = [];
+    while (j < after.length && !old.has(after[j])) pieces.push(after[j++]);
+    elementOf.get(s)?.replaceWith(...pieces.map(inkEl));
+  }
 }
 
 /** @param {Element | null} el @returns {S.Stroke | undefined} a stroke the eraser may touch */
@@ -364,7 +382,7 @@ function cutAt(e) {
   cutting.blocked ||= blocked;
   if (cut === part) return;
   cutting.strokes = L.replaceEditable(cutting.strokes, layers, cut);
-  renderInk(cutting.strokes);
+  patchInk(part, cut);
 }
 
 /** @param {PointerEvent} e */
