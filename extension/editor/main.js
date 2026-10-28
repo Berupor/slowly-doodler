@@ -47,6 +47,7 @@ let customColors = [];
 let tool = 'pen', color = 'black', weight = 3, symmetry = 'off', rainbow = false;
 let undoStack = [], redoStack = [];
 let gesture = null, erasing = null;
+let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false, refDrag = null;
 let sessionStart = null;
 let replay = null;
 let lastImport = null;
@@ -55,7 +56,6 @@ const cx = W / 2, cy = H / 2;
 const rot = a => ([x, y]) => [cx + (x - cx) * Math.cos(a) - (y - cy) * Math.sin(a), cy + (x - cx) * Math.sin(a) + (y - cy) * Math.cos(a)];
 const flipX = ([x, y]) => [2 * cx - x, y];
 const flipY = ([x, y]) => [x, 2 * cy - y];
-let refPose = { x: 0, y: 0, rot: 0, flip: 1, scale: 1 }, refMove = false, refDrag = null;
 const same = p => p;
 const turns = n => Array.from({ length: n }, (_, i) => rot(i * 2 * Math.PI / n));
 const SYMMETRY = {
@@ -198,6 +198,11 @@ board.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   stopReplay();
   board.setPointerCapture(e.pointerId);
+  if (refMove) {
+    const p = boardPoint(e);
+    refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
+    return;
+  }
   if (tool === 'eraser') {
     erasing = new Set();
     eraseAt(e);
@@ -206,16 +211,18 @@ board.addEventListener('pointerdown', e => {
   const now = Date.now();
   if (sessionStart === null) sessionStart = now - S.endTime(strokes) - (strokes.length ? STROKE_GAP_MS : 0);
   const p = toCanvas(e);
-  if (refMove) {
-    const p = boardPoint(e);
-    refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
-    return;
-  }
   gesture = { tool, color, weight, startOffset: now - sessionStart, t0: e.timeStamp, a: p, b: p, dur: 0, points: [[...p, 0]] };
   renderLive();
 });
 
 board.addEventListener('pointermove', e => {
+  if (refDrag) {
+    const p = boardPoint(e);
+    refPose.x = S.r2(refDrag.x + p.x - refDrag.px);
+    refPose.y = S.r2(refDrag.y + p.y - refDrag.py);
+    applyRef();
+    return;
+  }
   if (erasing) {
     for (const ev of e.getCoalescedEvents?.() ?? [e]) eraseAt(ev);
     return;
@@ -224,13 +231,6 @@ board.addEventListener('pointermove', e => {
   for (const ev of e.getCoalescedEvents?.() ?? [e]) {
     const p = toCanvas(ev);
     const t = Math.max(0, Math.round(ev.timeStamp - gesture.t0));
-  if (refDrag) {
-    const p = boardPoint(e);
-    refPose.x = S.r2(refDrag.x + p.x - refDrag.px);
-    refPose.y = S.r2(refDrag.y + p.y - refDrag.py);
-    applyRef();
-    return;
-  }
     if (gesture.tool === 'pen') {
       const last = gesture.points[gesture.points.length - 1];
       if ((p[0] !== last[0] || p[1] !== last[1]) && gesture.points.length < S.LIMITS.pointsPerStroke) gesture.points.push([...p, t]);
@@ -572,6 +572,7 @@ $('refFile').onchange = e => {
   img.setAttribute('opacity', $('refOpacity').value);
   img.style.pointerEvents = 'none';
   ref.replaceChildren(img);
+  resetRef();
   e.target.value = '';
 };
 $('refOpacity').oninput = () => ref.firstChild?.setAttribute('opacity', $('refOpacity').value);
@@ -600,7 +601,6 @@ $('refReset').onclick = resetRef;
 $('svgFile').onchange = async e => {
   const f = e.target.files[0];
   if (!f) return;
-  resetRef();
   svgSource = { text: await f.text(), remix: false };
   lastImport = null;
   runSvg('svg:' + Date.now());
