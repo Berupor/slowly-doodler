@@ -3,6 +3,7 @@ import { importSvg } from './import-svg.js';
 import { photoToPolylines, textToPolylines } from './raster.js';
 import * as lib from './library.js';
 import * as P from './precision.js';
+import { createSelector } from './select.js';
 
 const { W, H } = S;
 const NS = 'http://www.w3.org/2000/svg';
@@ -123,9 +124,10 @@ const TOOLS = {
   line: () => span('tool-line'),
   ellipse: () => icon('circle-o', '◯'),
   eraser: () => icon('eraser', '⌫'),
+  select: () => span('tool-select'),
 };
 /** @type {Record<string, string>} */
-const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser' };
+const TOOL_KEYS = { b: 'pen', l: 'line', o: 'ellipse', e: 'eraser', s: 'select' };
 const TYPING_TARGET = 'textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file])';
 
 /** @param {string} text */
@@ -190,6 +192,7 @@ function renderInk() {
     strokeOf.set(el, s);
     return el;
   }));
+  selector.refresh();
 }
 
 /** @param {Gesture} g @returns {S.Point[]} */
@@ -290,6 +293,17 @@ function pickAt(e) {
   setWeight(stroke.weight);
   say(`picked ${stroke.color}, weight ${stroke.weight}`);
 }
+const selector = createSelector({
+  board, typing: TYPING_TARGET, gapMs: STROKE_GAP_MS, say, pathEl, boardPoint, pxPerUnit,
+  strokes: () => strokes, palette: () => palette, commit: next => commit(next),
+  amend: next => { strokes = next; sessionStart = null; changed(); },
+  setTool: t => { tool = t; buildBars(); },
+  addPalette: extra => {
+    palette = { ...palette, ...extra };
+    for (const t of Object.keys(extra)) if (!customColors.includes(t)) customColors.push(t);
+    buildBars();
+  },
+});
 
 /** @param {number} x @param {number} y @param {number} w */
 function setView(x, y, w) {
@@ -299,6 +313,7 @@ function setView(x, y, w) {
   board.setAttribute('viewBox', `${view.x} ${view.y} ${w} ${h}`);
   $('zoom').hidden = w === W;
   $('zoom').textContent = `${Math.round(W / w * 100)}%`;
+  selector.zoomed();
 }
 
 /** @param {{ x: number, y: number }} p canvas point to keep under the client point @param {number} clientX @param {number} clientY @param {number} w */
@@ -334,6 +349,7 @@ function cancelStroke() {
   if (gesture) { gesture = null; live.replaceChildren(); }
   if (erasing) { erasing = null; renderInk(); }
   refDrag = null;
+  selector.cancel();
 }
 
 board.addEventListener('wheel', e => {
@@ -369,6 +385,10 @@ board.addEventListener('pointerdown', e => {
   if (refMove) {
     const p = boardPoint(e);
     refDrag = { px: p.x, py: p.y, x: refPose.x, y: refPose.y };
+    return;
+  }
+  if (tool === 'select') {
+    selector.down(e);
     return;
   }
   if (tool === 'eraser') {
@@ -407,6 +427,10 @@ board.addEventListener('pointermove', e => {
     applyRef();
     return;
   }
+  if (selector.busy) {
+    selector.move(e);
+    return;
+  }
   if (erasing) {
     for (const ev of e.getCoalescedEvents?.() ?? [e]) eraseAt(ev, erasing);
     return;
@@ -434,6 +458,7 @@ const endPointer = e => {
     panDrag = null;
     board.classList.remove('panning');
   } else if (refDrag) refDrag = null;
+  else if (selector.busy) selector.up();
   else if (erasing) {
     const gone = erasing;
     erasing = null;
@@ -480,10 +505,11 @@ function buildBars() {
   const tokens = [...Object.keys(S.BASE_COLORS), ...customColors];
   pillButtons('colors', 'drawing-color-ring', tokens.map(t => ({
     content: span('drawing-color-swatch', { background: S.entryFor(t, palette)[isDark() ? 'dark' : 'light'] }),
-    title: t, on: color === t && tool !== 'eraser', pick: () => { color = t; if (tool === 'eraser') tool = 'pen'; },
+    title: t, on: color === t && tool !== 'eraser', pick: () => { color = t; if (tool === 'eraser') tool = 'pen'; selector.paint(t); },
   })));
   board.classList.toggle('erasing', tool === 'eraser');
   setPicking(false);
+  selector.sync(tool);
   showWeight();
 }
 
@@ -508,6 +534,7 @@ function showWeight() {
 function setWeight(w) {
   weight = Math.min(S.LIMITS.maxWeight, Math.max(S.LIMITS.minWeight, w));
   if (tool === 'eraser') tool = 'pen';
+  selector.reweight(weight);
   buildBars();
   sizeRail.classList.add('showing');
   clearTimeout(railFlash);
@@ -684,6 +711,7 @@ function compressedStarts(list) {
 
 function startReplay() {
   if (!strokes.length) return;
+  selector.clear();
   const starts = compressedStarts(strokes);
   const els = strokes.map(s => pathEl([], s.color, s.weight));
   const shown = new Array(strokes.length).fill(0);
@@ -854,6 +882,7 @@ $('addColor').onclick = () => {
   if (!customColors.includes(t)) customColors.push(t);
   color = t;
   if (tool === 'eraser') tool = 'pen';
+  selector.paint(t);
   buildBars();
 };
 

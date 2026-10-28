@@ -264,3 +264,17 @@ body.busy [data-panel=import] :is(button, select, input, label.btn) { pointer-ev
   aside { width: auto; border-left: 0; border-top: 1px solid var(--line); }
   .paper { height: auto; width: min(92vw, 540px); }
 }
+
+:root { --select: #2f7df6; }
+:root.theme-dark { --select: #7db4ff; }
+.tool-select { display: block; width: 20px; height: 14px; border: 2px dashed currentColor; border-radius: 50%; }
+#sel { pointer-events: none; }
+#sel [data-h] { pointer-events: all; }
+#sel .halo { fill: none; stroke: var(--select); stroke-opacity: .35; stroke-linecap: round; stroke-linejoin: round; }
+#sel .box, #sel .handle, #sel .stem, #sel .lasso { vector-effect: non-scaling-stroke; stroke: var(--select); stroke-width: 1.5px; }
+#sel .box { fill: transparent; stroke-dasharray: 5 4; cursor: move; }
+#sel .handle { fill: var(--drawing-background); }
+#sel .lasso { fill: var(--select); fill-opacity: .08; stroke-dasharray: 4 3; }
+#sel [data-h=nw], #sel [data-h=se] { cursor: nwse-resize; }
+#sel [data-h=ne], #sel [data-h=sw] { cursor: nesw-resize; }
+#sel [data-h=rot] { cursor: grab; }
