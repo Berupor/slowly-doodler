@@ -2,6 +2,8 @@
   const PENDING = 'doodler:pending';
   const SVG_DATA = 'data:image/svg+xml';
   const SAVE_TIMEOUT_MS = 20000;
+  // Slowly restores and saves a drawing stroke by stroke, so every wait grows with the point count
+  const MS_PER_POINT = 0.2;
   const pageUrl = chrome.runtime.getURL('editor/index.html');
   const origin = new URL(pageUrl).origin;
   // web.slowly.app main.*.js markup; when their bundle changes, these are the strings to update
@@ -82,24 +84,42 @@
   let remixTarget = null;
   let saving = false;
 
+  const BUTTON_MARGIN = 8;
+  const BUTTON_GAP = 6;
+  const HIDE_DELAY_MS = 200;
+  let hideTimer = 0;
+  const inHoverZone = (/** @type {EventTarget | null} */ el) => !!el && (el === remixTarget || el === remix || el === save);
+  const buttonsShown = () => remix.style.display === 'block';
+  const hideButtons = () => { remix.style.display = save.style.display = 'none'; };
+
+  function placeButtons() {
+    if (!remixTarget) return;
+    const r = remixTarget.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return hideButtons();
+    const top = `${Math.max(r.top, 0) + BUTTON_MARGIN}px`;
+    const left = Math.min(r.right, innerWidth) - remix.offsetWidth - BUTTON_MARGIN;
+    Object.assign(remix.style, { left: `${left}px`, top });
+    Object.assign(save.style, { left: `${left - save.offsetWidth - BUTTON_GAP}px`, top });
+  }
+
   document.addEventListener('mouseover', e => {
     if (!(e.target instanceof Element)) return;
+    if (inHoverZone(e.target)) clearTimeout(hideTimer);
     const img = /** @type {HTMLImageElement | null} */ (e.target.closest(`img[src^="${SVG_DATA}"]`));
     if (!img || overlay || img.closest(SLOWLY.thumbnail)) return;
-    const r = img.getBoundingClientRect();
-    if (r.width < 60) return;
-    if (saving) return;
+    if (img.getBoundingClientRect().width < 60 || saving) return;
+    clearTimeout(hideTimer);
     remixTarget = img;
     remix.style.display = save.style.display = 'block';
-    const left = r.right - remix.offsetWidth - 8;
-    Object.assign(remix.style, { left: `${left}px`, top: `${r.top + 8}px` });
-    Object.assign(save.style, { left: `${left - save.offsetWidth - 6}px`, top: `${r.top + 8}px` });
+    placeButtons();
   });
-  const hideButtons = () => { remix.style.display = save.style.display = 'none'; };
   document.addEventListener('mouseout', e => {
-    if (saving || e.target !== remixTarget || e.relatedTarget === remix || e.relatedTarget === save) return;
-    hideButtons();
+    if (saving || !inHoverZone(e.target) || inHoverZone(e.relatedTarget)) return;
+    hideTimer = setTimeout(hideButtons, HIDE_DELAY_MS);
   });
+  const replaceButtons = () => { if (buttonsShown()) placeButtons(); };
+  addEventListener('scroll', replaceButtons, { capture: true, passive: true });
+  addEventListener('resize', replaceButtons);
   remix.onclick = () => {
     if (!remixTarget) return;
     hideButtons();
@@ -200,14 +220,15 @@
   /** @param {KeyboardEvent} e */
   function escClose(e) { if (e.key === 'Escape') close(); }
 
-  /** @param {string} text @param {number} [ms] */
+  /** @param {string} text @param {number} [ms] Infinity keeps the toast until it is removed */
   function toast(text, ms = 7000) {
     const t = css(document.createElement('div'),
       'position:fixed;right:18px;bottom:84px;z-index:2147483646;padding:12px 16px;border-radius:12px');
     t.className = 'toast show shadow-sm';
     t.textContent = text;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), ms);
+    if (Number.isFinite(ms)) setTimeout(() => t.remove(), ms);
+    return t;
   }
 
   /** @template T @param {() => T} check @param {number} ms @returns {Promise<T>} */
@@ -230,37 +251,42 @@
     return () => style.remove();
   }
 
-  /** @param {object} sdj */
+  /** @param {{ strokes: { points: unknown[] }[] }} sdj */
   async function attach(sdj) {
     if (document.querySelector(SLOWLY.editor))
       return toast('Close the open Slowly drawing editor first, then send again.');
     if (!findOpener()) document.querySelector(SLOWLY.replyPill)?.closest('button')?.click();
     const opener = await waitFor(findOpener, 3000);
     if (!opener || opener.disabled) return toast('Open a letter to reply to, then send the drawing again.');
-    localStorage.setItem(PENDING, JSON.stringify(sdj));
+    const points = sdj.strokes.reduce((n, s) => n + s.points.length, 0);
+    const budget = (/** @type {number} */ ms) => ms + Math.round(points * MS_PER_POINT);
     const show = hideNativeEditor();
+    const busy = toast('Attaching the drawing to your letter...', Infinity);
     try {
+      localStorage.setItem(PENDING, JSON.stringify(sdj));
       nativeClick = true;
       opener.click();
       nativeClick = false;
-      if (!await waitFor(() => !localStorage.getItem(PENDING), 5000)) throw new Error('the editor did not pick the drawing up');
-      const confirm = await waitFor(() => /** @type {HTMLElement | undefined} */ ([...document.querySelectorAll(SLOWLY.restoreConfirm)].pop()), 3000);
+      if (!await waitFor(() => !localStorage.getItem(PENDING), budget(5000))) throw new Error('the editor did not pick the drawing up');
+      const confirm = await waitFor(() => /** @type {HTMLElement | undefined} */ ([...document.querySelectorAll(SLOWLY.restoreConfirm)].pop()), budget(3000));
       if (!confirm) throw new SelectorMissing('restoreConfirm', 'no restore prompt');
       confirm.click();
       const done = await waitFor(() => {
         const b = /** @type {HTMLButtonElement | null} */ (document.querySelector(SLOWLY.editorDone));
         return b && !b.disabled && b;
-      }, 3000);
+      }, budget(3000));
       if (!done) throw new SelectorMissing('editorDone', 'save button not ready');
       done.click();
       const closed = await waitFor(() => !document.querySelector(SLOWLY.editor)
-        || document.querySelector(SLOWLY.editorWarning), SAVE_TIMEOUT_MS);
+        || document.querySelector(SLOWLY.editorWarning), budget(SAVE_TIMEOUT_MS));
       if (!closed || document.querySelector(SLOWLY.editor)) throw new Error('saving failed');
+      busy.remove();
       show();
       toast('Drawing attached to your letter.');
     } catch (err) {
       nativeClick = false;
       localStorage.removeItem(PENDING);
+      busy.remove();
       show();
       const reason = err instanceof Error ? err.message : String(err);
       if (err instanceof SelectorMissing) console.error('doodler_selector_missing', { selector: err.selector, reason });
